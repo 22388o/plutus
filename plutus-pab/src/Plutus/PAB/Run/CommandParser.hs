@@ -86,9 +86,11 @@ commandParser =
         [ migrationParser
         , allServersParser
         , clientServicesParser
+        , mockWalletParserOld
         , mockWalletParser
         , pabWebserverParser
         , mockNodeParser
+        , chainIndexParserOld
         , chainIndexParser
         , metadataParser
         , command
@@ -129,6 +131,12 @@ mockNodeParser =
             (pure StartMockNode)
             (fullDesc <> progDesc "Run a mock version of the Cardano node API server.")
 
+-- TODO Remove. Use old chain index
+mockWalletParserOld :: Mod CommandFields ConfigCommand
+mockWalletParserOld =
+    command "wallet-server-old" $
+    info (pure MockWalletOld) (fullDesc <> progDesc "Run the old mock version of the Cardano wallet API server.")
+
 mockWalletParser :: Mod CommandFields ConfigCommand
 mockWalletParser =
     command "wallet-server" $
@@ -136,6 +144,12 @@ mockWalletParser =
         (pure MockWallet)
         (fullDesc <>
          progDesc "Run a mock version of the Cardano wallet API server.")
+
+-- TODO Remove. Use old chain index
+chainIndexParserOld :: Mod CommandFields ConfigCommand
+chainIndexParserOld =
+    command "chain-index-old" $
+    info (pure ChainIndexOld) (fullDesc <> progDesc "Run the old chain index.")
 
 chainIndexParser :: Mod CommandFields ConfigCommand
 chainIndexParser =
@@ -153,8 +167,10 @@ allServersParser =
     flip info (fullDesc <> progDesc "Run all the mock servers needed.") $ do
         pure  (ForkCommands
                    [ StartMockNode
+                   , ChainIndexOld
                    , ChainIndex
                    , Metadata
+                   , MockWalletOld
                    , MockWallet
                    , PABWebserver
                    ])
@@ -164,7 +180,8 @@ clientServicesParser =
     command "client-services" $
     info
         (pure (ForkCommands
-                    [ ChainIndex
+                    [ ChainIndexOld
+                    , ChainIndex
                     , Metadata
                     , MockWallet
                     , PABWebserver

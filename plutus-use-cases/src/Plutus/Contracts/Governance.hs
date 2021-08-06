@@ -201,6 +201,7 @@ contract params = forever $ mapError (review _GovError) endpoints where
     initLaw = endpoint @"new-law" $ \bsLaw -> do
         let mph = Scripts.forwardingMintingPolicyHash (typedValidator params)
         void $ SM.runInitialise theClient (GovState (toBuiltin bsLaw) mph Nothing) mempty
+        -- void $ SM.runInitialiseOld theClient (GovState bsLaw mph Nothing) mempty
         let tokens = Haskell.zipWith (const (mkTokenName (baseTokenName params))) (initialHolders params) [1..]
         void $ SM.runStep theClient $ MintTokens tokens
 

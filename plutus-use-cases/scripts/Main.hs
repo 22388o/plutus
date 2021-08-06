@@ -163,7 +163,7 @@ writeScriptsTo ScriptsConfig{scPath, scCommand} prefix trace emulatorCfg = do
             S.fst'
             $ run
             $ foldEmulatorStreamM (L.generalize theFold)
-            $ Trace.runEmulatorStream emulatorCfg trace
+            $ Trace.runEmulatorStreamOld emulatorCfg trace
 
     createDirectoryIfMissing True scPath
     case scCommand of

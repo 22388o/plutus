@@ -42,6 +42,7 @@ import           Ledger.Slot                      (Slot)
 import           Ledger.Tx                        (txId)
 import           Ledger.TxId                      (TxId)
 
+-- TODO: Delete eventually and replace by Plutus.ChainIndex.ChainIndexControlEffect
 data ChainIndexControlEffect r where
     ChainIndexNotify :: ChainClientNotification -> ChainIndexControlEffect ()
 makeEffect ''ChainIndexControlEffect
@@ -67,6 +68,7 @@ instance Pretty ChainIndexEvent where
                 , vsep (fmap prettyItem itms)
                 ]
 
+-- TODO Eventually replace by Plutus.ChainIndex.Emulator.Handlers.ChainIndexEmulatorState
 data ChainIndexState =
     ChainIndexState
         { _idxWatchedAddresses      :: AddressMap -- ^ Utxo set annotated with datums

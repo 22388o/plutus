@@ -14,7 +14,7 @@ import           Test.Tasty
 
 tests :: TestTree
 tests = testGroup "error handling"
-    [ checkPredicate "throw an error"
+    [ checkPredicateOld "throw an error"
         (assertContractError @_ @() (contract def) (Trace.walletInstanceTag w1) (\case { Error1 _ -> True; _ -> False}) "should throw error")
         $ do
             slotCfg <- Trace.getSlotConfig
@@ -22,7 +22,7 @@ tests = testGroup "error handling"
             Trace.callEndpoint @"throwError" hdl ()
             void Trace.nextSlot
 
-    , checkPredicate "catch an error"
+    , checkPredicateOld "catch an error"
         (assertDone @_ @() @_ @MyError (contract def) (Trace.walletInstanceTag w1) (const True) "should be done")
         $ do
             slotCfg <- Trace.getSlotConfig

@@ -53,10 +53,15 @@ module Plutus.Contract.Test(
     , reasonable
     , reasonable'
     -- * Checking predicates
+    , checkPredicateOld
     , checkPredicate
+    , checkPredicateOptionsOld
     , checkPredicateOptions
+    , checkPredicateGenOld
     , checkPredicateGen
+    , checkPredicateGenOptionsOld
     , checkPredicateGenOptions
+    , checkPredicateInnerOld
     , checkPredicateInner
     , CheckOptions
     , defaultCheckOptions
@@ -117,14 +122,15 @@ import qualified Ledger.Generators                     as Gen
 import           Ledger.Index                          (ScriptValidationEvent, ValidationError)
 import           Ledger.Slot                           (Slot)
 import           Ledger.Value                          (Value)
-import           Wallet.Emulator                       (EmulatorEvent, EmulatorTimeEvent)
 
 import           Plutus.Contract.Trace                 as X
-import           Plutus.Trace.Emulator                 (EmulatorConfig (..), EmulatorTrace, runEmulatorStream)
+import           Plutus.Trace.Emulator                 (EmulatorConfig (..), EmulatorTrace, runEmulatorStream,
+                                                        runEmulatorStreamOld)
 import           Plutus.Trace.Emulator.Types           (ContractConstraints, ContractInstanceLog,
                                                         ContractInstanceState (..), ContractInstanceTag, UserThreadMsg)
 import qualified Streaming                             as S
 import qualified Streaming.Prelude                     as S
+import           Wallet.Emulator                       (EmulatorEvent, EmulatorTimeEvent)
 import           Wallet.Emulator.Chain                 (ChainEvent)
 import           Wallet.Emulator.Folds                 (EmulatorFoldErr (..), Outcome (..), describeError, postMapM)
 import qualified Wallet.Emulator.Folds                 as Folds
@@ -161,6 +167,14 @@ defaultCheckOptions =
 
 type TestEffects = '[Reader InitialDistribution, Error EmulatorFoldErr, Writer (Doc Void)]
 
+-- | TODO: To delete. Uses the old chain index.
+checkPredicateOld ::
+    String -- ^ Descriptive name of the test
+    -> TracePredicate -- ^ The predicate to check
+    -> EmulatorTrace ()
+    -> TestTree
+checkPredicateOld = checkPredicateOptionsOld defaultCheckOptions
+
 -- | Check if the emulator trace meets the condition
 checkPredicate ::
     String -- ^ Descriptive name of the test
@@ -168,6 +182,14 @@ checkPredicate ::
     -> EmulatorTrace ()
     -> TestTree
 checkPredicate = checkPredicateOptions defaultCheckOptions
+
+-- | TODO: To delete. Uses the old chain index.
+checkPredicateGenOld ::
+    GeneratorModel
+    -> TracePredicate
+    -> EmulatorTrace ()
+    -> Property
+checkPredicateGenOld = checkPredicateGenOptionsOld defaultCheckOptions
 
 -- | Check if the emulator trace meets the condition, using the
 --   'GeneratorModel' to generate initial transactions for the blockchain
@@ -177,6 +199,44 @@ checkPredicateGen ::
     -> EmulatorTrace ()
     -> Property
 checkPredicateGen = checkPredicateGenOptions defaultCheckOptions
+
+-- | TODO: To delete. Uses the old chain index.
+checkPredicateInnerOld :: forall m.
+    Monad m
+    => CheckOptions
+    -> TracePredicate
+    -> EmulatorTrace ()
+    -> (String -> m ()) -- ^ Print out debug information in case of test failures
+    -> (Bool -> m ()) -- ^ assert
+    -> m ()
+checkPredicateInnerOld CheckOptions{_minLogLevel, _maxSlot, _emulatorConfig} predicate action annot assert = do
+    let dist = _emulatorConfig ^. initialChainState . to initialDist
+        theStream :: forall effs. S.Stream (S.Of (LogMessage EmulatorEvent)) (Eff effs) ()
+        theStream = takeUntilSlot _maxSlot $ runEmulatorStreamOld _emulatorConfig action
+        consumeStream :: forall a. S.Stream (S.Of (LogMessage EmulatorEvent)) (Eff TestEffects) a -> Eff TestEffects (S.Of Bool a)
+        consumeStream = foldEmulatorStreamM @TestEffects predicate
+    result <- runM
+                $ reinterpret @(Writer (Doc Void)) @m  (\case { Tell d -> sendM $ annot $ Text.unpack $ renderStrict $ layoutPretty defaultLayoutOptions d })
+                $ runError
+                $ runReader dist
+                $ consumeStream theStream
+
+    unless (fmap S.fst' result == Right True) $ do
+        annot "Test failed."
+        annot "Emulator log:"
+        S.mapM_ annot
+            $ S.hoist runM
+            $ S.map (Text.unpack . renderStrict . layoutPretty defaultLayoutOptions . pretty)
+            $ filterLogLevel _minLogLevel
+            theStream
+
+        case result of
+            Left err -> do
+                annot "Error:"
+                annot (describeError err)
+                annot (show err)
+                assert False
+            Right _ -> assert False
 
 -- | Evaluate a trace predicate on an emulator trace, printing out debug information
 --   and making assertions as we go.
@@ -217,6 +277,18 @@ checkPredicateInner CheckOptions{_minLogLevel, _maxSlot, _emulatorConfig} predic
                 assert False
             Right _ -> assert False
 
+-- | TODO: To delete. Uses the old chain index.
+checkPredicateGenOptionsOld ::
+    CheckOptions
+    -> GeneratorModel
+    -> TracePredicate
+    -> EmulatorTrace ()
+    -> Property
+checkPredicateGenOptionsOld options gm predicate action = property $ do
+    Mockchain{mockchainInitialTxPool} <- forAll (Gen.genMockchain' gm)
+    let options' = options & emulatorConfig . initialChainState .~ Right mockchainInitialTxPool
+    checkPredicateInnerOld options' predicate action Hedgehog.annotate Hedgehog.assert
+
 -- | A version of 'checkPredicateGen' with configurable 'CheckOptions'
 checkPredicateGenOptions ::
     CheckOptions
@@ -228,6 +300,17 @@ checkPredicateGenOptions options gm predicate action = property $ do
     Mockchain{mockchainInitialTxPool} <- forAll (Gen.genMockchain' gm)
     let options' = options & emulatorConfig . initialChainState .~ Right mockchainInitialTxPool
     checkPredicateInner options' predicate action Hedgehog.annotate Hedgehog.assert
+
+-- | TODO: To delete. Uses the old chain index.
+checkPredicateOptionsOld ::
+    CheckOptions -- ^ Options to use
+    -> String -- ^ Descriptive name of the test
+    -> TracePredicate -- ^ The predicate to check
+    -> EmulatorTrace ()
+    -> TestTree
+checkPredicateOptionsOld options nm predicate action = do
+    HUnit.testCaseSteps nm $ \step -> do
+        checkPredicateInnerOld options predicate action step (HUnit.assertBool nm)
 
 -- | A version of 'checkPredicate' with configurable 'CheckOptions'
 checkPredicateOptions ::

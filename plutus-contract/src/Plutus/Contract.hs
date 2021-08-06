@@ -42,19 +42,36 @@ module Plutus.Contract(
     -- * Blockchain events
     , Wallet.Types.AddressChangeRequest(..)
     , Wallet.Types.AddressChangeResponse(..)
-    , Request.addressChangeRequest
-    , Request.nextTransactionsAt
+    , Request.addressChangeRequestOld
+    , Request.nextTransactionsAtOld
+    , Request.watchAddressUntilSlotOld
     , Request.watchAddressUntilSlot
+    , Request.watchAddressUntilTimeOld
     , Request.watchAddressUntilTime
+    , Request.fundsAtAddressGtOld
     , Request.fundsAtAddressGt
+    , Request.fundsAtAddressGeqOld
     , Request.fundsAtAddressGeq
-    , Request.awaitUtxoSpent
+    , Request.awaitUtxoSpentOld
+    , Request.utxoIsSpentOld
     , Request.utxoIsSpent
-    , Request.awaitUtxoProduced
+    , Request.awaitUtxoProducedOld
+    , Request.utxoIsProducedOld
     , Request.utxoIsProduced
+    -- * Chain index requests
+    , Request.datumFromHash
+    , Request.validatorFromHash
+    , Request.mintingPolicyFromHash
+    , Request.stakeValidatorFromHash
+    , Request.txOutFromRef
+    , Request.txFromTxId
+    , Request.utxoRefMembership
+    , Request.utxosAt
+    , Request.utxosWithTxAt
+    , Request.getTip
     -- * UTXO set
     , UtxoMap
-    , Request.utxoAt
+    , Request.utxoAtOld
     -- * Wallet's own public key
     , Request.ownPubKey
     -- * Contract instance Id
@@ -64,10 +81,14 @@ module Plutus.Contract(
     , tell
     -- * Transactions
     , WalletAPIError
+    , Request.submitTxOld
     , Request.submitTx
     , Request.submitTxConfirmed
+    , Request.submitTxConstraintsOld
     , Request.submitTxConstraints
+    , Request.submitTxConstraintsSpendingOld
     , Request.submitTxConstraintsSpending
+    , Request.submitTxConstraintsWithOld
     , Request.submitTxConstraintsWith
     , Request.submitUnbalancedTx
     , Request.submitBalancedTx

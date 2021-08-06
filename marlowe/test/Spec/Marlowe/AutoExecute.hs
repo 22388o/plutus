@@ -73,7 +73,7 @@ almostAll :: Ledger.Value
 almostAll = defaultLovelaceAmount <> P.inv (lovelaceValueOf 50)
 
 autoexecZCBTest :: TestTree
-autoexecZCBTest = checkPredicate "ZCB Auto Execute Contract"
+autoexecZCBTest = checkPredicateOld "ZCB Auto Execute Contract"
     (assertNoFailedTransactions
     -- /\ emulatorLog (const False) ""
     T..&&. assertNotDone (marlowePlutusContract) (Trace.walletInstanceTag alice) "contract should not have any errors"
@@ -108,7 +108,7 @@ autoexecZCBTest = checkPredicate "ZCB Auto Execute Contract"
 
 
 autoexecZCBTestAliceWalksAway :: TestTree
-autoexecZCBTestAliceWalksAway = checkPredicate
+autoexecZCBTestAliceWalksAway = checkPredicateOld
     "ZCB Auto Execute Contract when Alice walks away"
     (assertNoFailedTransactions
     -- /\ emulatorLog (const False) ""
@@ -139,7 +139,7 @@ autoexecZCBTestAliceWalksAway = checkPredicate
 
 
 autoexecZCBTestBobWalksAway :: TestTree
-autoexecZCBTestBobWalksAway = checkPredicate
+autoexecZCBTestBobWalksAway = checkPredicateOld
     "ZCB Auto Execute Contract when Bob walks away"
     (assertNoFailedTransactions
     -- /\ emulatorLog (const False) ""
@@ -169,7 +169,7 @@ autoexecZCBTestBobWalksAway = checkPredicate
 
 
 awaitUntilTimeoutTest :: TestTree
-awaitUntilTimeoutTest = checkPredicate "Party waits for contract to appear on chain until timeout"
+awaitUntilTimeoutTest = checkPredicateOld "Party waits for contract to appear on chain until timeout"
     (assertNoFailedTransactions
     -- /\ emulatorLog (const False) ""
     T..&&. assertNotDone marlowePlutusContract (Trace.walletInstanceTag bob) "contract should close"

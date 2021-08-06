@@ -103,6 +103,7 @@ import           Data.Text                               (Text)
 import           Ledger.Tx                               (Address, Tx)
 import           Ledger.TxId                             (TxId)
 import           Ledger.Value                            (Value)
+import           Plutus.ChainIndex                       (ChainIndexQueryEffect)
 import           Plutus.Contract.Effects                 (ActiveEndpoint (..), PABReq, TxStatus (Unknown))
 import           Plutus.PAB.Core.ContractInstance        (ContractInstanceMsg, ContractInstanceState)
 import qualified Plutus.PAB.Core.ContractInstance        as ContractInstance
@@ -308,6 +309,7 @@ type ContractInstanceEffects t env effs =
     ': ContractStore t
     ': WalletEffect
     ': ChainIndexEffect
+    ': ChainIndexQueryEffect
     ': NodeClientEffect
     ': UUIDEffect
     ': LogMsg TxBalanceMsg
@@ -415,7 +417,8 @@ data EffectHandlers t env =
             , LastMember IO effs
             )
             => Wallet
-            -> Eff (WalletEffect ': ChainIndexEffect ': NodeClientEffect ': effs)
+            -- TODO: Remove old chain index 'ChainIndexEffect'
+            -> Eff (WalletEffect ': ChainIndexEffect ': ChainIndexQueryEffect ': NodeClientEffect ': effs)
             ~> Eff effs
 
         -- | Action to run on startup.

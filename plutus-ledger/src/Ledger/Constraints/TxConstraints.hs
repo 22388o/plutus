@@ -45,7 +45,9 @@ data TxConstraint =
     | MustSpendAtLeast Value
     | MustProduceAtLeast Value
     | MustSpendPubKeyOutput TxOutRef
+    | MustSpendPubKeyOutput' TxOutRef -- TODO To remove. Uses old chain index.
     | MustSpendScriptOutput TxOutRef Redeemer
+    | MustSpendScriptOutput' TxOutRef Redeemer -- TODO To remove. Uses old chain index.
     | MustMintValue MintingPolicyHash Redeemer TokenName Integer
     | MustPayToPubKey PubKeyHash Value
     | MustPayToOtherScript ValidatorHash Datum Value
@@ -68,7 +70,11 @@ instance Pretty TxConstraint where
             hang 2 $ vsep ["must produce at least:", pretty vl]
         MustSpendPubKeyOutput ref ->
             hang 2 $ vsep ["must spend pubkey output:", pretty ref]
+        MustSpendPubKeyOutput' ref ->
+            hang 2 $ vsep ["must spend pubkey output:", pretty ref]
         MustSpendScriptOutput ref red ->
+            hang 2 $ vsep ["must spend script output:", pretty ref, pretty red]
+        MustSpendScriptOutput' ref red ->
             hang 2 $ vsep ["must spend script output:", pretty ref, pretty red]
         MustMintValue mps red tn i ->
             hang 2 $ vsep ["must mint value:", pretty mps, pretty red, pretty tn <+> pretty i]
@@ -235,9 +241,17 @@ mustSpendAtLeast = singleton . MustSpendAtLeast
 mustProduceAtLeast :: forall i o. Value -> TxConstraints i o
 mustProduceAtLeast = singleton . MustProduceAtLeast
 
+{-# INLINABLE mustSpendPubKeyOutputOld #-}
+mustSpendPubKeyOutputOld :: forall i o. TxOutRef -> TxConstraints i o
+mustSpendPubKeyOutputOld = singleton . MustSpendPubKeyOutput'
+
 {-# INLINABLE mustSpendPubKeyOutput #-}
 mustSpendPubKeyOutput :: forall i o. TxOutRef -> TxConstraints i o
 mustSpendPubKeyOutput = singleton . MustSpendPubKeyOutput
+
+{-# INLINABLE mustSpendScriptOutputOld #-}
+mustSpendScriptOutputOld :: forall i o. TxOutRef -> Redeemer -> TxConstraints i o
+mustSpendScriptOutputOld txOutref = singleton . MustSpendScriptOutput' txOutref
 
 {-# INLINABLE mustSpendScriptOutput #-}
 mustSpendScriptOutput :: forall i o. TxOutRef -> Redeemer -> TxConstraints i o
@@ -307,7 +321,9 @@ modifiesUtxoSet TxConstraints{txConstraints, txOwnOutputs, txOwnInputs} =
             MustSpendAtLeast{}          -> True
             MustProduceAtLeast{}        -> True
             MustSpendPubKeyOutput{}     -> True
+            MustSpendPubKeyOutput'{}    -> True
             MustSpendScriptOutput{}     -> True
+            MustSpendScriptOutput'{}    -> True
             MustMintValue{}             -> True
             MustPayToPubKey _ vl        -> not (isZero vl)
             MustPayToOtherScript _ _ vl -> not (isZero vl)

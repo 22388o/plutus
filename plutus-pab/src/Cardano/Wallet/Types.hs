@@ -1,21 +1,21 @@
-{-# LANGUAGE DataKinds          #-}
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DeriveGeneric      #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE FlexibleContexts   #-}
-{-# LANGUAGE GADTs              #-}
-{-# LANGUAGE KindSignatures     #-}
-{-# LANGUAGE LambdaCase         #-}
-{-# LANGUAGE NamedFieldPuns     #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE StrictData         #-}
-{-# LANGUAGE TemplateHaskell    #-}
-{-# LANGUAGE TypeApplications   #-}
+{-# LANGUAGE DataKinds         #-}
+{-# LANGUAGE DeriveAnyClass    #-}
+{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE DerivingVia       #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE GADTs             #-}
+{-# LANGUAGE KindSignatures    #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE NamedFieldPuns    #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE TypeApplications  #-}
 
 module Cardano.Wallet.Types (
      -- * effect type for the mock wallet
-      WalletEffects
+      WalletEffectsOld
+    , WalletEffects
     , Wallets
     , MultiWalletEffect (..)
     , createWallet
@@ -52,6 +52,7 @@ import           Data.Text                          (Text)
 import           Data.Text.Prettyprint.Doc          (Pretty (..), (<+>))
 import           GHC.Generics                       (Generic)
 import           Ledger                             (PubKey, PubKeyHash)
+import           Plutus.ChainIndex                  (ChainIndexQueryEffect)
 import           Plutus.PAB.Arbitrary               ()
 import           Servant                            (ServerError (..))
 import           Servant.Client                     (BaseUrl (..), ClientError, Scheme (..))
@@ -60,7 +61,6 @@ import           Wallet.Effects                     (ChainIndexEffect, NodeClien
 import           Wallet.Emulator.Error              (WalletAPIError)
 import           Wallet.Emulator.LogMessages        (TxBalanceMsg)
 import           Wallet.Emulator.Wallet             (Wallet (..), WalletState)
-
 
 -- | Information about an emulated wallet.
 data WalletInfo =
@@ -79,10 +79,20 @@ data MultiWalletEffect r where
     MultiWallet :: Wallet -> Eff '[WalletEffect] a -> MultiWalletEffect a
 makeEffect ''MultiWalletEffect
 
+-- TODO Remove. Uses the old chain index
+type WalletEffectsOld m = '[ MultiWalletEffect
+                        , NodeClientEffect
+                        , ChainIndexEffect
+                        , State Wallets
+                        , LogMsg Text
+                        , Error WalletAPIError
+                        , Error ClientError
+                        , Error ServerError
+                        , m]
 
 type WalletEffects m = '[ MultiWalletEffect
                         , NodeClientEffect
-                        , ChainIndexEffect
+                        , ChainIndexQueryEffect
                         , State Wallets
                         , LogMsg Text
                         , Error WalletAPIError
@@ -104,7 +114,7 @@ newtype Port = Port Int
 data WalletConfig =
     WalletConfig
         { baseUrl :: WalletUrl
-        , wallet  :: Wallet
+        , wallet  :: Wallet -- TODO Remove. Used only by old chain index
         }
     deriving (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)

@@ -18,6 +18,7 @@ module Wallet.Emulator.Stream(
     , initialState
     , slotConfig
     , feeConfig
+    , runTraceStreamOld
     , runTraceStream
     -- * Stream manipulation
     , takeUntilSlot
@@ -48,6 +49,7 @@ import           Ledger.Blockchain                      (Block, OnChainTx (..))
 import           Ledger.Fee                             (FeeConfig)
 import           Ledger.Slot                            (Slot)
 import           Ledger.Value                           (Value)
+import           Plutus.ChainIndex                      (ChainIndexError)
 import           Streaming                              (Stream)
 import qualified Streaming                              as S
 import           Streaming.Prelude                      (Of)
@@ -108,6 +110,37 @@ foldEmulatorStreamM theFold =
 
 -- | Turn an emulator action into a 'Stream' of emulator log messages, returning
 --   the final state of the emulator.
+-- TODO: To delete. Uses the old chain index.
+runTraceStreamOld :: forall effs.
+    EmulatorConfig
+    -> Eff '[ State EmulatorState
+            , LogMsg EmulatorEvent'
+            , MultiAgentEffect
+            , MultiAgentControlEffect
+            , ChainEffect
+            , ChainControlEffect
+            , Error EmulatorRuntimeError
+            ] ()
+    -> Stream (Of (LogMessage EmulatorEvent)) (Eff effs) (Maybe EmulatorErr, EmulatorState)
+runTraceStreamOld conf@EmulatorConfig{_slotConfig, _feeConfig} =
+    fmap (first (either Just (const Nothing)))
+    . S.hoist (pure . run)
+    . runStream @(LogMessage EmulatorEvent) @_ @'[]
+    . runState (initialState conf)
+    . interpret handleLogCoroutine
+    . reinterpret @_ @(LogMsg EmulatorEvent) (mkTimedLogs @EmulatorEvent')
+    . runError
+    . wrapError WalletErr
+    . wrapError ChainIndexErr
+    . wrapError AssertionErr
+    . wrapError InstanceErr
+    . EM.processEmulatedOld _slotConfig _feeConfig
+    . subsume
+    . subsume @(State EmulatorState)
+    . raiseEnd
+
+-- | Turn an emulator action into a 'Stream' of emulator log messages, returning
+--   the final state of the emulator.
 runTraceStream :: forall effs.
     EmulatorConfig
     -> Eff '[ State EmulatorState
@@ -128,6 +161,7 @@ runTraceStream conf@EmulatorConfig{_slotConfig, _feeConfig} =
     . reinterpret @_ @(LogMsg EmulatorEvent) (mkTimedLogs @EmulatorEvent')
     . runError
     . wrapError WalletErr
+    . wrapError ChainIndexErr
     . wrapError AssertionErr
     . wrapError InstanceErr
     . EM.processEmulated _slotConfig _feeConfig
@@ -169,6 +203,7 @@ initialState EmulatorConfig{_initialChainState} =
 
 data EmulatorErr =
     WalletErr WalletAPIError
+    | ChainIndexErr ChainIndexError
     | AssertionErr EM.AssertionError
     | InstanceErr EmulatorRuntimeError
     deriving (Show)

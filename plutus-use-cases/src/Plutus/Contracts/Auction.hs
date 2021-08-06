@@ -22,7 +22,7 @@ module Plutus.Contracts.Auction(
     AuctionOutput(..),
     AuctionError(..),
     ThreadToken,
-    SM.getThreadToken
+    SM.getThreadTokenOld
     ) where
 
 import           Control.Lens                     (makeClassyPrisms)
@@ -41,8 +41,8 @@ import qualified Ledger.TimeSlot                  as TimeSlot
 import qualified Ledger.Typed.Scripts             as Scripts
 import           Ledger.Typed.Tx                  (TypedScriptTxOut (..))
 import           Plutus.Contract
-import           Plutus.Contract.StateMachine     (State (..), StateMachine (..), StateMachineClient, ThreadToken, Void,
-                                                   WaitingResult (..))
+import           Plutus.Contract.StateMachine     (State (..), StateMachine (..), StateMachineClientOld, ThreadToken,
+                                                   Void, WaitingResultOld (..))
 import qualified Plutus.Contract.StateMachine     as SM
 import           Plutus.Contract.Util             (loopM)
 import qualified PlutusTx
@@ -173,10 +173,10 @@ machineClient
     :: Scripts.TypedValidator AuctionMachine
     -> ThreadToken -- ^ Thread token of the instance
     -> AuctionParams
-    -> StateMachineClient AuctionState AuctionInput
+    -> StateMachineClientOld AuctionState AuctionInput
 machineClient inst threadToken auctionParams =
     let machine = auctionStateMachine (threadToken, auctionParams)
-    in SM.mkStateMachineClient (SM.StateMachineInstance machine inst)
+    in SM.mkStateMachineClientOld (SM.StateMachineInstance machine inst)
 
 type BuyerSchema = Endpoint "bid" Ada
 type SellerSchema = EmptySchema -- Don't need any endpoints: the contract runs automatically until the auction is finished.
@@ -208,7 +208,7 @@ instance SM.AsSMContractError AuctionError where
 -- | Client code for the seller
 auctionSeller :: Value -> POSIXTime -> Contract AuctionOutput SellerSchema AuctionError ()
 auctionSeller value time = do
-    threadToken <- SM.getThreadToken
+    threadToken <- SM.getThreadTokenOld
     tell $ threadTokenOut threadToken
     self <- Ledger.pubKeyHash <$> ownPubKey
     let params       = AuctionParams{apOwner = self, apAsset = value, apEndTime = time }
@@ -217,12 +217,12 @@ auctionSeller value time = do
 
     _ <- handleError
             (\e -> do { logError (AuctionFailed e); throwError (StateMachineContractError e) })
-            (SM.runInitialise client (initialState self) value)
+            (SM.runInitialiseOld client (initialState self) value)
 
     logInfo $ AuctionStarted params
     _ <- awaitTime time
 
-    r <- SM.runStep client Payout
+    r <- SM.runStepOld client Payout
     case r of
         SM.TransitionFailure i            -> logError (TransitionFailed i) -- TODO: Add an endpoint "retry" to the seller?
         SM.TransitionSuccess (Finished h) -> logInfo $ AuctionEnded h
@@ -230,9 +230,9 @@ auctionSeller value time = do
 
 
 -- | Get the current state of the contract and log it.
-currentState :: StateMachineClient AuctionState AuctionInput -> Contract AuctionOutput BuyerSchema AuctionError (Maybe HighestBid)
-currentState client = mapError StateMachineContractError (SM.getOnChainState client) >>= \case
-    Just (SM.OnChainState{SM.ocsTxOut=TypedScriptTxOut{tyTxOutData=Ongoing s}}, _) -> do
+currentState :: StateMachineClientOld AuctionState AuctionInput -> Contract AuctionOutput BuyerSchema AuctionError (Maybe HighestBid)
+currentState client = mapError StateMachineContractError (SM.getOnChainStateOld client) >>= \case
+    Just (SM.OnChainStateOld{SM.ocsTxOut'=TypedScriptTxOut{tyTxOutData=Ongoing s}}, _) -> do
         tell $ auctionStateOut $ Ongoing s
         pure (Just s)
     _ -> do
@@ -261,19 +261,20 @@ data BuyerEvent =
         | OtherBid HighestBid -- ^ Another buyer submitted a higher bid
         | NoChange HighestBid -- ^ Nothing has changed
 
-waitForChange :: SlotConfig -> AuctionParams -> StateMachineClient AuctionState AuctionInput -> HighestBid -> Contract AuctionOutput BuyerSchema AuctionError BuyerEvent
+waitForChange :: SlotConfig -> AuctionParams -> StateMachineClientOld AuctionState AuctionInput -> HighestBid -> Contract AuctionOutput BuyerSchema AuctionError BuyerEvent
 waitForChange slotCfg AuctionParams{apEndTime} client lastHighestBid = do
     t <- currentTime
     let
         auctionOver = AuctionIsOver lastHighestBid Haskell.<$ isTime apEndTime
         submitOwnBid = endpoint @"bid" $ pure . SubmitOwnBid
+        -- TODO Fix. OtherBid event is never triggered in the unit tests
         otherBid = do
-            let address = Scripts.validatorAddress (SM.typedValidator (SM.scInstance client))
+            let address = Scripts.validatorAddress (SM.typedValidator (SM.scInstance' client))
                 targetTime = TimeSlot.slotToBeginPOSIXTime slotCfg
                            $ Haskell.succ
                            $ TimeSlot.posixTimeToEnclosingSlot slotCfg t
             promiseBind
-                (addressChangeRequest
+                (addressChangeRequestOld
                     AddressChangeRequest
                     { acreqSlotRangeFrom = TimeSlot.posixTimeToEnclosingSlot slotCfg targetTime
                     , acreqSlotRangeTo = TimeSlot.posixTimeToEnclosingSlot slotCfg targetTime
@@ -287,7 +288,7 @@ waitForChange slotCfg AuctionParams{apEndTime} client lastHighestBid = do
     -- see note [Buyer client]
     selectList [auctionOver, submitOwnBid, otherBid]
 
-handleEvent :: StateMachineClient AuctionState AuctionInput -> HighestBid -> BuyerEvent -> Contract AuctionOutput BuyerSchema AuctionError (Either HighestBid ())
+handleEvent :: StateMachineClientOld AuctionState AuctionInput -> HighestBid -> BuyerEvent -> Contract AuctionOutput BuyerSchema AuctionError (Either HighestBid ())
 handleEvent client lastHighestBid change =
     let continue = pure . Left
         stop     = pure (Right ())
@@ -298,7 +299,7 @@ handleEvent client lastHighestBid change =
             logInfo @Haskell.String "Submitting bid"
             self <- Ledger.pubKeyHash <$> ownPubKey
             logInfo @Haskell.String "Received pubkey"
-            r <- SM.runStep client Bid{newBid = ada, newBidder = self}
+            r <- SM.runStepOld client Bid{newBid = ada, newBidder = self}
             logInfo @Haskell.String "SM: runStep done"
             case r of
                 SM.TransitionFailure i -> logError (TransitionFailed i) >> continue lastHighestBid
@@ -326,7 +327,7 @@ auctionBuyer slotCfg currency params = do
         Just s -> loop s
 
         -- If the state can't be found we wait for it to appear.
-        Nothing -> SM.waitForUpdateUntilTime client (apEndTime params) >>= \case
-            Transition _ _ (Ongoing s) -> loop s
-            InitialState _ (Ongoing s) -> loop s
-            _                          -> logWarn CurrentStateNotFound
+        Nothing -> SM.waitForUpdateUntilTimeOld client (apEndTime params) >>= \case
+            Transition' _ _ (Ongoing s) -> loop s
+            InitialState' _ (Ongoing s) -> loop s
+            _                           -> logWarn CurrentStateNotFound

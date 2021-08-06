@@ -21,7 +21,9 @@ import           Wallet.Types (ContractInstanceId)
 data ConfigCommand =
     Migrate
     | StartMockNode -- ^ Run the mock node service
+    | MockWalletOld -- ^ Run the old mock wallet service. TODO: Remove
     | MockWallet -- ^ Run the mock wallet service
+    | ChainIndexOld -- ^ Run the old chain index service. TODO Remove
     | ChainIndex -- ^ Run the chain index service
     | Metadata -- ^ Run the mock meta-data service
     | ForkCommands [ConfigCommand] -- ^ Fork a list of commands

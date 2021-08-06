@@ -10,7 +10,8 @@
 {-# LANGUAGE TypeApplications    #-}
 
 module Playground.Interpreter.Util
-    ( stage
+    ( stageOld
+    , stage
     , renderInstanceTrace
     ) where
 
@@ -47,7 +48,8 @@ import           Plutus.Contract                       (Contract)
 import           Plutus.Trace                          (ContractConstraints, ContractInstanceTag)
 import           Plutus.Trace.Emulator.Types           (EmulatorRuntimeError (EmulatorJSONDecodingError), _ContractLog,
                                                         _ReceiveEndpointCall, cilMessage)
-import           Plutus.Trace.Playground               (PlaygroundTrace, runPlaygroundStream, walletInstanceTag)
+import           Plutus.Trace.Playground               (PlaygroundTrace, runPlaygroundStream, runPlaygroundStreamOld,
+                                                        walletInstanceTag)
 import qualified Plutus.Trace.Playground
 import qualified Plutus.Trace.Playground               as Trace
 import           Streaming.Prelude                     (fst')
@@ -108,6 +110,34 @@ evaluationResultFold wallets =
             <*> pure (fmap pkh wallets)
 
 -- | Evaluate a JSON payload from the Playground frontend against a given contract schema.
+--
+-- TODO Remove uses old chain index
+stageOld ::
+       forall w s a.
+       ( ContractConstraints s
+       , JSON.ToJSON w
+       , Monoid w
+       )
+    => Contract w s Text a
+    -> BSL.ByteString
+    -> BSL.ByteString
+    -> Either PlaygroundError EvaluationResult
+stageOld contract programJson simulatorWalletsJson = do
+    simulationJson :: String <- playgroundDecode "String" programJson
+    simulation :: [Expression] <-
+        playgroundDecode "[Expression schema]" . BSL.pack $ simulationJson
+    simulatorWallets :: [SimulatorWallet] <-
+        playgroundDecode "[SimulatorWallet]" simulatorWalletsJson
+    let config = Plutus.Trace.Playground.EmulatorConfig (Left $ toInitialDistribution simulatorWallets) def def
+        allWallets = simulatorWalletWallet <$> simulatorWallets
+        final = run
+            $ runError
+            $ foldEmulatorStreamM @'[Error PlaygroundError] (evaluationResultFold allWallets)
+            $ runPlaygroundStreamOld config (void contract) (traverse_ expressionToTrace simulation)
+
+    case final of
+        Left err     -> Left . OtherError . show $ err
+        Right result -> Right (fst' result)
 stage ::
        forall w s a.
        ( ContractConstraints s

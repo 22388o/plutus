@@ -10,9 +10,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
 module Wallet.Effects(
-    WalletEffects
     -- * Wallet effect
-    , WalletEffect(..)
+    WalletEffect(..)
     , submitTxn
     , ownPubKey
     , balanceTx
@@ -60,16 +59,10 @@ makeEffect ''NodeClientEffect
     are of interest need to be added with 'startWatching' before their outputs
     show up in the 'AddressMap' returned by 'watchedAddresses'.
 -}
+-- TODO: This needs to go (replaced by Plutus.ChainIndex.Effects.ChainIndexQueryEffect)
 data ChainIndexEffect r where
     StartWatching :: Address -> ChainIndexEffect ()
     WatchedAddresses :: ChainIndexEffect AddressMap
     ConfirmedBlocks :: ChainIndexEffect [Block]
     AddressChanged :: AddressChangeRequest -> ChainIndexEffect AddressChangeResponse
 makeEffect ''ChainIndexEffect
-
--- | Effects that allow contracts to interact with the blockchain
-type WalletEffects =
-    '[ WalletEffect
-    , NodeClientEffect
-    , ChainIndexEffect
-    ]

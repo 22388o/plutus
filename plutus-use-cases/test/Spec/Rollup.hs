@@ -17,7 +17,7 @@ import           Plutus.Contracts.Crowdfunding
 import qualified Spec.GameStateMachine
 import qualified Spec.Vesting
 
-import           Plutus.Trace.Emulator         (EmulatorTrace, runEmulatorStream)
+import           Plutus.Trace.Emulator         (EmulatorTrace, runEmulatorStreamOld)
 import qualified Streaming.Prelude             as S
 import           Test.Tasty                    (TestTree, testGroup)
 import           Test.Tasty.Golden             (goldenVsString)
@@ -48,7 +48,7 @@ render trace = do
                $ run
                $ foldEmulatorStreamM (L.generalize (showBlockchainFold allWallets'))
                $ takeUntilSlot 21
-               $ runEmulatorStream def trace
+               $ runEmulatorStreamOld def trace
         allWallets' = fmap (\w -> (pubKeyHash (walletPubKey w), w)) (Wallet <$> [1..10])
     case result of
         Left err       -> assertFailure $ show err

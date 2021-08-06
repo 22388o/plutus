@@ -120,5 +120,5 @@ getExampleContracts = \case
 
 handlers :: SimulatorEffectHandlers (Builtin ExampleContracts)
 handlers =
-    Simulator.mkSimulatorHandlers def def
+    Simulator.mkSimulatorHandlersOld def def
     $ interpret (contractHandler Builtin.handleBuiltin)

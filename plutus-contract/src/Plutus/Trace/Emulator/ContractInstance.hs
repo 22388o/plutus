@@ -52,6 +52,7 @@ import qualified Data.Set                             as Set
 import qualified Data.Text                            as T
 import           Ledger.Blockchain                    (OnChainTx (..), consumableInputs, outputsProduced)
 import           Ledger.Tx                            (Address, TxIn (..), TxOut (..), TxOutRef, txId)
+import qualified Plutus.ChainIndex                    as ChainIndex
 import           Plutus.Contract                      (Contract (..))
 import           Plutus.Contract.Effects              (PABReq, PABResp (AwaitTxStatusChangeResp), TxValidity (..),
                                                        matches)
@@ -382,7 +383,7 @@ respondToRequest :: forall w s e effs.
     => Bool -- ^ Flag on whether to log 'NoRequestsHandled' messages.
     -> RequestHandler (Reader ContractInstanceId ': EmulatedWalletEffects) PABReq PABResp
     -- ^ How to respond to the requests.
-    ->  Eff effs (Maybe (Response PABResp))
+    -> Eff effs (Maybe (Response PABResp))
 respondToRequest isLogShowed f = do
     hks <- getHooks @w @s @e
     let hdl :: (Eff (Reader ContractInstanceId ': EmulatedWalletEffects) (Maybe (Response PABResp))) = tryHandler (wrapHandler f) hks
@@ -393,7 +394,8 @@ respondToRequest isLogShowed f = do
                     $ subsume @(LogMsg TxBalanceMsg)
                     $ subsume @(LogMsg RequestHandlerLogMsg)
                     $ subsume @(LogObserve (LogMessage T.Text))
-                    $ subsume @ChainIndexEffect
+                    $ subsume @ChainIndex.ChainIndexQueryEffect
+                    $ subsume @ChainIndexEffect -- TODO: Delete when new chain index is full integrated
                     $ subsume @NodeClientEffect
                     $ subsume @(Error WAPI.WalletAPIError)
                     $ subsume @WalletEffect

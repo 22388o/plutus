@@ -17,6 +17,8 @@ module Plutus.ChainIndex.Emulator.DiskState(
     , txMap
     , addressMap
     , fromTx
+    , CredentialMap
+    , unCredentialMap
 ) where
 
 import           Control.Lens           (At (..), Index, IxValue, Ixed (..), lens, makeLenses, (&), (.~), (^.))
@@ -34,8 +36,11 @@ import           Ledger.Scripts         (Datum, DatumHash, MintingPolicy, Mintin
 import           Ledger.TxId            (TxId)
 import           Plutus.ChainIndex.Tx   (ChainIndexTx (..), txOutRefs)
 
-newtype CredentialMap = CredentialMap { unCredentialMap :: Map Credential (Set TxOutRef) }
+-- | Set of transaction output references for each address.
+newtype CredentialMap = CredentialMap { _unCredentialMap :: Map Credential (Set TxOutRef) }
     deriving stock (Eq, Show, Generic)
+
+makeLenses ''CredentialMap
 
 type instance IxValue CredentialMap = Set TxOutRef
 type instance Index CredentialMap = Credential
@@ -55,10 +60,11 @@ instance Monoid CredentialMap where
     mappend = (<>)
     mempty  = CredentialMap mempty
 
+-- | Convert the outputs of the transaction into a 'CredentialMap'.
 txCredentialMap :: ChainIndexTx -> CredentialMap
-txCredentialMap =
+txCredentialMap  =
     let credential TxOut{txOutAddress=Address{addressCredential}} = addressCredential
-    in CredentialMap . Map.fromList . fmap (bimap credential Set.singleton) . txOutRefs
+    in CredentialMap . Map.fromListWith (<>) . fmap (bimap credential Set.singleton) . txOutRefs
 
 -- | Data that we keep on disk. (This type is used for testing only - we need
 --   other structures for the disk-backed storage)

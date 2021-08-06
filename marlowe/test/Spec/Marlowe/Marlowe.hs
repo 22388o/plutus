@@ -94,7 +94,7 @@ bob = Wallet 2
 
 
 zeroCouponBondTest :: TestTree
-zeroCouponBondTest = checkPredicateOptions (defaultCheckOptions & maxSlot .~ 250) "Zero Coupon Bond Contract"
+zeroCouponBondTest = checkPredicateOptionsOld (defaultCheckOptions & maxSlot .~ 250) "Zero Coupon Bond Contract"
     (assertNoFailedTransactions
     -- T..&&. emulatorLog (const False) ""
     T..&&. assertDone marlowePlutusContract (Trace.walletInstanceTag alice) (const True) "contract should close"
@@ -135,7 +135,7 @@ zeroCouponBondTest = checkPredicateOptions (defaultCheckOptions & maxSlot .~ 250
 
 
 errorHandlingTest :: TestTree
-errorHandlingTest = checkPredicateOptions (defaultCheckOptions & maxSlot .~ 250) "Error handling"
+errorHandlingTest = checkPredicateOptionsOld (defaultCheckOptions & maxSlot .~ 250) "Error handling"
     (assertAccumState marlowePlutusContract (Trace.walletInstanceTag alice)
     (\case SomeError (TransitionError _) -> True
            _                             -> False
@@ -166,7 +166,7 @@ errorHandlingTest = checkPredicateOptions (defaultCheckOptions & maxSlot .~ 250)
 
 
 trustFundTest :: TestTree
-trustFundTest = checkPredicateOptions (defaultCheckOptions & maxSlot .~ 200) "Trust Fund Contract"
+trustFundTest = checkPredicateOptionsOld (defaultCheckOptions & maxSlot .~ 200) "Trust Fund Contract"
     (assertNoFailedTransactions
     -- T..&&. emulatorLog (const False) ""
     T..&&. assertNotDone marlowePlutusContract (Trace.walletInstanceTag alice) "contract should not have any errors"
@@ -240,7 +240,7 @@ trustFundTest = checkPredicateOptions (defaultCheckOptions & maxSlot .~ 200) "Tr
                     $ run
                     $ runError @Folds.EmulatorFoldErr
                     $ foldEmulatorStreamM fld
-                    $ Trace.runEmulatorStream def
+                    $ Trace.runEmulatorStreamOld def
                     $ do
                         void $ Trace.activateContractWallet alice (void con)
                         Trace.waitNSlots 10

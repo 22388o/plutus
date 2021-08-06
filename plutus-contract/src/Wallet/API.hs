@@ -28,6 +28,7 @@ module Wallet.API(
     publishTx,
     getClientSlot,
     getClientSlotConfig,
+    -- TODO Remove the old chain index effect and related functions
     ChainIndexEffect,
     startWatching,
     watchedAddresses,

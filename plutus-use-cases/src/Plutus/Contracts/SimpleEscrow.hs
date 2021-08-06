@@ -139,9 +139,9 @@ redeemEp = endpoint @"redeem" redeem
     redeem params = do
       time <- currentTime
       pk <- ownPubKey
-      unspentOutputs <- utxoAt escrowAddress
+      unspentOutputs <- utxosAt escrowAddress
 
-      let value = foldMap (Tx.txOutValue . Tx.txOutTxOut) unspentOutputs
+      let value = foldMap Tx.getTxOutValue unspentOutputs
           tx = Typed.collectFromScript unspentOutputs Redeem
                       <> Constraints.mustValidateIn (Interval.to (Haskell.pred $ deadline params))
                       -- Pay me the output of this script
@@ -158,7 +158,8 @@ refundEp :: Promise () EscrowSchema EscrowError RefundSuccess
 refundEp = endpoint @"refund" refund
   where
     refund params = do
-      unspentOutputs <- utxoAt escrowAddress
+      unspentOutputs <- utxosAt escrowAddress
+      logInfo $ Haskell.show unspentOutputs
 
       let tx = Typed.collectFromScript unspentOutputs Refund
                   <> Constraints.mustValidateIn (Interval.from (deadline params))

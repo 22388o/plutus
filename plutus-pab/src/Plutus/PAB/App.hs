@@ -13,10 +13,10 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE StrictData            #-}
 {-# LANGUAGE TypeApplications      #-}
+{-# LANGUAGE TypeOperators         #-}
 
 {-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
 
-{-# LANGUAGE TypeOperators         #-}
 module Plutus.PAB.App(
     App,
     runApp,
@@ -30,7 +30,7 @@ module Plutus.PAB.App(
 
 import           Cardano.Api.NetworkId.Extra                    (NetworkIdWrapper (..))
 import           Cardano.BM.Trace                               (Trace, logDebug)
-import           Cardano.ChainIndex.Client                      (handleChainIndexClient)
+import           Cardano.ChainIndex.Client                      (handleChainIndexClient, handleChainIndexClient')
 import qualified Cardano.ChainIndex.Types                       as ChainIndex
 import           Cardano.Node.Client                            (handleNodeClientClient)
 import qualified Cardano.Node.Client                            as NodeClient
@@ -154,6 +154,13 @@ appEffectHandlers storageBackend config trace BuiltinHandler{contractHandler} =
             . reinterpretN @'[_, _, _, _] (handleNodeClientClient @IO $ mscSlotConfig $ nodeServerConfig config)
 
             -- handle 'ChainIndexEffect'
+            . flip handleError (throwError . ChainIndexError)
+            . interpret (Core.handleUserEnvReader @(Builtin a) @(AppEnv a))
+            . reinterpret (Core.handleMappedReader @(AppEnv a) @ClientEnv chainIndexEnv)
+            . reinterpret2 (handleChainIndexClient' @IO)
+
+            -- handle 'ChainIndexEffect'
+            -- TODO: Remove. Old chain index
             . flip handleError (throwError . ChainIndexError)
             . interpret (Core.handleUserEnvReader @(Builtin a) @(AppEnv a))
             . reinterpret (Core.handleMappedReader @(AppEnv a) @ClientEnv chainIndexEnv)

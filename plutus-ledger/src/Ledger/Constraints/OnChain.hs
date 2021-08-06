@@ -64,9 +64,18 @@ checkTxConstraint ctx@ScriptContext{scriptContextTxInfo} = \case
     MustProduceAtLeast vl ->
         traceIfFalse "L6" -- "Produced value not OK"
         $ vl `leq` V.valueProduced scriptContextTxInfo
+    MustSpendPubKeyOutput' txOutRef ->
+        traceIfFalse "L7" -- "Public key output not spent"
+        $ maybe False (isNothing . txOutDatumHash . txInInfoResolved) (V.findTxInByTxOutRef txOutRef scriptContextTxInfo)
     MustSpendPubKeyOutput txOutRef ->
         traceIfFalse "L7" -- "Public key output not spent"
         $ maybe False (isNothing . txOutDatumHash . txInInfoResolved) (V.findTxInByTxOutRef txOutRef scriptContextTxInfo)
+    MustSpendScriptOutput' txOutRef _ ->
+        traceIfFalse "L8" -- "Script output not spent"
+        -- Unfortunately we can't check the redeemer, because TxInfo only
+        -- gives us the redeemer's hash, but 'MustSpendScriptOutput' gives
+        -- us the full redeemer
+        $ isJust (V.findTxInByTxOutRef txOutRef scriptContextTxInfo)
     MustSpendScriptOutput txOutRef _ ->
         traceIfFalse "L8" -- "Script output not spent"
         -- Unfortunately we can't check the redeemer, because TxInfo only

@@ -12,21 +12,28 @@ Defines the system threads. One thread for each simulated agent, and a block
 maker thread for the blockchain / network.
 
 -}
-module Plutus.Trace.Emulator.System(
-    launchSystemThreads
-    ) where
+module Plutus.Trace.Emulator.System
+  ( launchSystemThreadsOld
+  , launchSystemThreads
+  ) where
 
 import           Control.Monad                 (forM_, void)
 import           Control.Monad.Freer
 import           Control.Monad.Freer.Coroutine
 import           Data.Foldable                 (traverse_)
 import           Data.Maybe                    (maybeToList)
+import qualified Data.Text                     as Text
+import qualified Data.Text.Encoding            as Text
 import           Wallet.Effects                (startWatching)
 import           Wallet.Emulator.Chain         (ChainControlEffect, modifySlot, processBlock)
 import           Wallet.Emulator.MultiAgent    (MultiAgentControlEffect, MultiAgentEffect, walletAction,
                                                 walletControlAction)
 
+import           Data.Hashable                 (hash)
 import           Data.String                   (IsString (..))
+import           Ledger                        (TxId (..), eitherTx, txId)
+import           Plutus.ChainIndex             (BlockId (..), Tip (Tip, TipAtGenesis), appendBlock, fromOnChainTx,
+                                                getTip)
 import           Plutus.Trace.Emulator.Types   (EmulatorMessage (..))
 import           Plutus.Trace.Scheduler        (EmSystemCall, MessageCall (..), Priority (..), Tag, fork, mkSysCall,
                                                 sleep)
@@ -66,6 +73,23 @@ just arrive later.
 -}
 
 -- | Start the system threads.
+--
+-- TODO: To delete. Uses the old chain index.
+launchSystemThreadsOld :: forall effs.
+    ( Member ChainControlEffect effs
+    , Member MultiAgentEffect effs
+    , Member MultiAgentControlEffect effs
+    )
+    => [Wallet]
+    -> Eff (Yield (EmSystemCall effs EmulatorMessage) (Maybe EmulatorMessage) ': effs) ()
+launchSystemThreadsOld wallets = do
+    _ <- sleep @effs @EmulatorMessage Sleeping
+    -- 1. Threads for updating the agents' states. See note [Simulated Agents]
+    traverse_ (\w -> fork @effs @EmulatorMessage (agentTag w) Normal $ agentThreadOld @effs w) wallets
+    -- 2. Block maker thread. See note [Simulator Time]
+    void $ fork @effs @EmulatorMessage blockMakerTag Normal (blockMaker @effs)
+
+-- | Start the system threads.
 launchSystemThreads :: forall effs.
     ( Member ChainControlEffect effs
     , Member MultiAgentEffect effs
@@ -103,14 +127,16 @@ blockMaker = go where
         go
 
 -- | Thread for a simulated agent. See note [Simulated Agents]
-agentThread :: forall effs effs2.
+--
+-- TODO To delete. Uses the old chain index
+agentThreadOld :: forall effs effs2.
     ( Member MultiAgentEffect effs2
     , Member MultiAgentControlEffect effs2
     , Member (Yield (EmSystemCall effs EmulatorMessage) (Maybe EmulatorMessage)) effs2
     )
     => Wallet
     -> Eff effs2 ()
-agentThread wllt = walletAction wllt (startWatching $ walletAddress wllt) >> go where
+agentThreadOld wllt = walletAction wllt (startWatching $ walletAddress wllt) >> go where
     go = do
         e <- sleep @effs @EmulatorMessage Sleeping
         let notis = maybeToList e >>= \case
@@ -123,3 +149,34 @@ agentThread wllt = walletAction wllt (startWatching $ walletAddress wllt) >> go 
                 chainIndexNotify n
         go
 
+-- | Thread for a simulated agent. See note [Simulated Agents]
+agentThread :: forall effs effs2.
+    ( Member MultiAgentEffect effs2
+    , Member MultiAgentControlEffect effs2
+    , Member (Yield (EmSystemCall effs EmulatorMessage) (Maybe EmulatorMessage)) effs2
+    )
+    => Wallet
+    -> Eff effs2 ()
+agentThread wllt = go where
+    go = do
+        e <- sleep @effs @EmulatorMessage Sleeping
+        let clientNotis = maybeToList e >>= \case
+                NewSlot blocks slot -> fmap BlockValidated blocks ++ [SlotChanged slot]
+                _                   -> []
+        forM_ clientNotis $ \n -> walletControlAction wllt $ clientNotify n
+
+        currentTip <- walletAction wllt getTip
+        walletControlAction wllt $ do
+          case e of
+            Just (NewSlot blocks slot) -> do
+              let nextBlockNo = case currentTip of TipAtGenesis -> 0
+                                                   Tip _ _ n    -> n + 1
+              let txs = concat blocks
+              let blockId = BlockId
+                          $ (Text.encodeUtf8 . Text.pack . show . hash)
+                          $ foldMap (getTxId . eitherTx txId txId) txs
+              let newTip = Tip slot blockId nextBlockNo
+              appendBlock newTip (fmap fromOnChainTx txs)
+            _ -> return ()
+
+        go

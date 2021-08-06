@@ -89,8 +89,8 @@ import           Data.Text.Prettyprint.Doc        (Pretty (..), colon, hsep, ind
 import           Data.Text.Prettyprint.Doc.Extras (PrettyShow (..))
 import           GHC.Generics                     (Generic)
 import           Ledger                           (Address, Datum, DatumHash, MintingPolicy, MintingPolicyHash,
-                                                   OnChainTx, PubKey, Tx, TxId, TxOutRef, TxOutTx (..), ValidatorHash,
-                                                   eitherTx, txId)
+                                                   OnChainTx, PubKey, StakeValidator, StakeValidatorHash, Tx, TxId,
+                                                   TxOutRef, TxOutTx (..), ValidatorHash, eitherTx, txId)
 import           Ledger.AddressMap                (UtxoMap)
 import           Ledger.Constraints.OffChain      (UnbalancedTx)
 import           Ledger.Credential                (Credential)
@@ -98,7 +98,7 @@ import           Ledger.Scripts                   (Validator)
 import           Ledger.Slot                      (Slot (..), SlotRange)
 import           Ledger.Time                      (POSIXTime (..), POSIXTimeRange)
 import           Ledger.TimeSlot                  (SlotConversionError)
-import           Ledger.Tx                        (TxOut)
+import           Ledger.Tx                        (ChainIndexTxOut)
 import           Plutus.ChainIndex                (Tip)
 import           Plutus.ChainIndex.Tx             (ChainIndexTx (_citxTxId))
 import           Plutus.ChainIndex.Types          (Page (pageItems))
@@ -118,9 +118,9 @@ data PABReq =
     | CurrentTimeReq
     | OwnContractInstanceIdReq
     | OwnPublicKeyReq
-    | UtxoAtReq Address
+    | UtxoAtReq Address -- TODO Remove, uses old chain index
     | ChainIndexQueryReq ChainIndexQuery
-    | AddressChangeReq AddressChangeRequest -- deprecated
+    | AddressChangeReq AddressChangeRequest -- TODO Remove, uses old chain index
     | BalanceTxReq UnbalancedTx
     | WriteBalancedTxReq Tx
     | ExposeEndpointReq ActiveEndpoint
@@ -210,15 +210,16 @@ matches a b = case (a, b) of
 
 chainIndexMatches :: ChainIndexQuery -> ChainIndexResponse -> Bool
 chainIndexMatches q r = case (q, r) of
-    (DatumFromHash{}, DatumHashResponse{})                 -> True
-    (ValidatorFromHash{}, ValidatorHashResponse{})         -> True
-    (MintingPolicyFromHash{}, MintingPolicyHashResponse{}) -> True
-    (TxOutFromRef{}, TxOutRefResponse{})                   -> True
-    (TxFromTxId{}, TxIdResponse{})                         -> True
-    (UtxoSetMembership{}, UtxoSetMembershipResponse{})     -> True
-    (UtxoSetAtAddress{}, UtxoSetAtResponse{})              -> True
-    (GetTip{}, GetTipResponse{})                           -> True
-    _                                                      -> False
+    (DatumFromHash{}, DatumHashResponse{})                   -> True
+    (ValidatorFromHash{}, ValidatorHashResponse{})           -> True
+    (MintingPolicyFromHash{}, MintingPolicyHashResponse{})   -> True
+    (StakeValidatorFromHash{}, StakeValidatorHashResponse{}) -> True
+    (TxOutFromRef{}, TxOutRefResponse{})                     -> True
+    (TxFromTxId{}, TxIdResponse{})                           -> True
+    (UtxoSetMembership{}, UtxoSetMembershipResponse{})       -> True
+    (UtxoSetAtAddress{}, UtxoSetAtResponse{})                -> True
+    (GetTip{}, GetTipResponse{})                             -> True
+    _                                                        -> False
 
 -- | Represents all possible chain index queries. Each constructor contains the
 -- input(s) needed for the query. These possible queries correspond to the
@@ -227,6 +228,7 @@ data ChainIndexQuery =
     DatumFromHash DatumHash
   | ValidatorFromHash ValidatorHash
   | MintingPolicyFromHash MintingPolicyHash
+  | StakeValidatorFromHash StakeValidatorHash
   | TxOutFromRef TxOutRef
   | TxFromTxId TxId
   | UtxoSetMembership TxOutRef
@@ -240,6 +242,7 @@ instance Pretty ChainIndexQuery where
         DatumFromHash h            -> "requesting datum from hash" <+> pretty h
         ValidatorFromHash h        -> "requesting validator from hash" <+> pretty h
         MintingPolicyFromHash h    -> "requesting minting policy from hash" <+> pretty h
+        StakeValidatorFromHash h   -> "requesting stake validator from hash" <+> pretty h
         TxOutFromRef r             -> "requesting utxo from utxo reference" <+> pretty r
         TxFromTxId i               -> "requesting chain index tx from id" <+> pretty i
         UtxoSetMembership txOutRef -> "whether tx output is part of the utxo set" <+> pretty txOutRef
@@ -253,7 +256,8 @@ data ChainIndexResponse =
     DatumHashResponse (Maybe Datum)
   | ValidatorHashResponse (Maybe Validator)
   | MintingPolicyHashResponse (Maybe MintingPolicy)
-  | TxOutRefResponse (Maybe TxOut)
+  | StakeValidatorHashResponse (Maybe StakeValidator)
+  | TxOutRefResponse (Maybe ChainIndexTxOut)
   | TxIdResponse (Maybe ChainIndexTx)
   | UtxoSetMembershipResponse (Tip, Bool)
   | UtxoSetAtResponse (Tip, Page TxOutRef)
@@ -266,6 +270,7 @@ instance Pretty ChainIndexResponse where
         DatumHashResponse d -> "Chain index datum from hash response:" <+> pretty d
         ValidatorHashResponse v -> "Chain index validator from hash response:" <+> pretty v
         MintingPolicyHashResponse m -> "Chain index minting policy from hash response:" <+> pretty m
+        StakeValidatorHashResponse m -> "Chain index stake validator from hash response:" <+> pretty m
         TxOutRefResponse t -> "Chain index utxo from utxo ref response:" <+> pretty t
         TxIdResponse t -> "Chain index tx from tx id response:" <+> pretty (_citxTxId <$> t)
         UtxoSetMembershipResponse (tip, b) ->

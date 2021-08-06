@@ -9,10 +9,13 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE Rank2Types            #-}
 {-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
+
 {-# OPTIONS_GHC -Wno-orphans  #-}
+
 module Wallet.Emulator.Wallet where
 
 import           Control.Lens                   as Lens
@@ -46,14 +49,15 @@ import           Ledger.Fee                     (FeeConfig (..), calcFees)
 import           Ledger.TimeSlot                (posixTimeRangeToContainedSlotRange)
 import qualified Ledger.Tx                      as Tx
 import qualified Ledger.Value                   as Value
+import           Plutus.ChainIndex              (ChainIndexEmulatorState, ChainIndexQueryEffect)
+import qualified Plutus.ChainIndex              as ChainIndex
 import           Plutus.Contract.Checkpoint     (CheckpointLogMsg)
 import qualified PlutusTx.Prelude               as PlutusTx
 import           Prelude                        as P
 import           Servant.API                    (FromHttpApiData (..), ToHttpApiData (..))
 import qualified Wallet.API                     as WAPI
-import           Wallet.Effects                 (ChainIndexEffect, NodeClientEffect, WalletEffect (..),
+import           Wallet.Effects                 (ChainIndexEffect, NodeClientEffect, WalletEffect (..), publishTx,
                                                  watchedAddresses)
-import qualified Wallet.Effects                 as W
 import           Wallet.Emulator.Chain          (ChainState (..))
 import           Wallet.Emulator.ChainIndex     (ChainIndexState, idxWatchedAddresses)
 import           Wallet.Emulator.LogMessages    (RequestHandlerLogMsg, TxBalanceMsg (..))
@@ -118,10 +122,11 @@ makePrisms ''WalletEvent
 
 -- | The state used by the mock wallet environment.
 data WalletState = WalletState {
-    _ownPrivateKey  :: PrivateKey, -- ^ User's 'PrivateKey'.
-    _nodeClient     :: NodeClientState,
-    _chainIndex     :: ChainIndexState,
-    _signingProcess :: SigningProcess
+    _ownPrivateKey           :: PrivateKey, -- ^ User's 'PrivateKey'.
+    _nodeClient              :: NodeClientState,
+    _chainIndex              :: ChainIndexState, -- TODO To delete. Old chain index
+    _chainIndexEmulatorState :: ChainIndexEmulatorState,
+    _signingProcess          :: SigningProcess
     } deriving Show
 
 makeLenses ''WalletState
@@ -133,14 +138,14 @@ ownAddress = pubKeyAddress . toPublicKey . view ownPrivateKey
 -- | An empty wallet state with the public/private key pair for a wallet, and the public-key address
 -- for that wallet as the sole watched address.
 emptyWalletState :: Wallet -> WalletState
-emptyWalletState w = WalletState pk emptyNodeClientState mempty sp  where
+emptyWalletState w = WalletState pk emptyNodeClientState mempty mempty sp  where
     pk = walletPrivKey w
     sp = defaultSigningProcess w
 
 -- | An empty wallet using the given private key.
 -- for that wallet as the sole watched address.
 emptyWalletStateFromPrivateKey :: PrivateKey -> WalletState
-emptyWalletStateFromPrivateKey pk = WalletState pk emptyNodeClientState mempty sp where
+emptyWalletStateFromPrivateKey pk = WalletState pk emptyNodeClientState mempty mempty sp where
     sp = signWithPrivateKey pk
 
 data PaymentArgs =
@@ -153,9 +158,38 @@ data PaymentArgs =
         -- ^ The value that must be covered by the payment's inputs
         }
 
-handleWallet ::
+-- TODO: To delete. Uses the old chain index.
+handleWalletOld ::
     ( Member NodeClientEffect effs
     , Member ChainIndexEffect effs
+    , Member (State WalletState) effs
+    , Member (LogMsg TxBalanceMsg) effs
+    )
+    => FeeConfig
+    -> WalletEffect ~> Eff effs
+handleWalletOld feeCfg = \case
+    SubmitTxn tx -> do
+        logInfo $ SubmittingTx tx
+        publishTx tx
+    OwnPubKey -> toPublicKey <$> gets _ownPrivateKey
+    BalanceTx utx' -> runError $ do
+        logInfo $ BalancingUnbalancedTx utx'
+        utxo <- get >>= ownOutputsOld
+        slotConfig <- WAPI.getClientSlotConfig
+        let validitySlotRange = posixTimeRangeToContainedSlotRange slotConfig (utx' ^. U.validityTimeRange)
+        let utx = utx' & U.tx . validRange .~ validitySlotRange
+        utxWithFees <- validateTxAndAddFeesOld feeCfg utxo utx
+        -- balance to add fees
+        tx' <- handleBalanceTxOld utxo (utx & U.tx . fee .~ (utxWithFees ^. U.tx . fee))
+        tx'' <- handleAddSignature tx'
+        logInfo $ FinishedBalancing tx''
+        pure tx''
+    WalletAddSignature tx -> handleAddSignature tx
+    TotalFunds -> foldMap txOutValue <$> (get >>= ownOutputsOld)
+
+handleWallet ::
+    ( Member NodeClientEffect effs
+    , Member ChainIndexQueryEffect effs
     , Member (State WalletState) effs
     , Member (LogMsg TxBalanceMsg) effs
     )
@@ -164,12 +198,12 @@ handleWallet ::
 handleWallet feeCfg = \case
     SubmitTxn tx -> do
         logInfo $ SubmittingTx tx
-        W.publishTx tx
+        publishTx tx
     OwnPubKey -> toPublicKey <$> gets _ownPrivateKey
     BalanceTx utx' -> runError $ do
         logInfo $ BalancingUnbalancedTx utx'
         utxo <- get >>= ownOutputs
-        slotConfig <- W.getClientSlotConfig
+        slotConfig <- WAPI.getClientSlotConfig
         let validitySlotRange = posixTimeRangeToContainedSlotRange slotConfig (utx' ^. U.validityTimeRange)
         let utx = utx' & U.tx . validRange .~ validitySlotRange
         utxWithFees <- validateTxAndAddFees feeCfg utxo utx
@@ -179,7 +213,7 @@ handleWallet feeCfg = \case
         logInfo $ FinishedBalancing tx''
         pure tx''
     WalletAddSignature tx -> handleAddSignature tx
-    TotalFunds -> foldMap (txOutValue . txOutTxOut) <$> (get >>= ownOutputs)
+    TotalFunds -> foldMap getTxOutValue <$> (get >>= ownOutputs)
 
 handleAddSignature ::
     Member (State WalletState) effs
@@ -189,26 +223,43 @@ handleAddSignature tx = do
     privKey <- gets _ownPrivateKey
     pure (addSignature privKey tx)
 
-ownOutputs :: forall effs. Member ChainIndexEffect effs => WalletState -> Eff effs (Map.Map TxOutRef TxOutTx)
-ownOutputs WalletState{_ownPrivateKey} = do
+-- TODO: To delete. Uses the old chain index.
+ownOutputsOld :: forall effs.
+    ( Member ChainIndexEffect effs
+    )
+    => WalletState
+    -> Eff effs (Map.Map TxOutRef TxOut)
+ownOutputsOld WalletState{_ownPrivateKey} = do
     let addr = pubKeyAddress $ toPublicKey _ownPrivateKey
-    fromMaybe mempty . view (at addr) <$> watchedAddresses
+    fmap (fmap txOutTxOut) $ fromMaybe mempty . view (at addr) <$> watchedAddresses
 
-validateTxAndAddFees ::
+ownOutputs :: forall effs.
+    ( Member ChainIndexQueryEffect effs
+    )
+    => WalletState
+    -> Eff effs (Map.Map TxOutRef ChainIndexTxOut)
+ownOutputs WalletState{_ownPrivateKey} = do
+    let cred = addressCredential $ pubKeyAddress $ toPublicKey _ownPrivateKey
+    refs <- ChainIndex.pageItems . snd <$> ChainIndex.utxoSetAtAddress cred
+    -- TODO Make the following line more readable and maybe move to Plutus.ChainIndex.Effects
+    Map.fromList . catMaybes <$> traverse (\txOutRef -> fmap (\txOutMaybe -> fmap (txOutRef,) txOutMaybe) $ ChainIndex.txOutFromRef txOutRef) refs
+
+-- TODO: To delete. Uses the old chain index.
+validateTxAndAddFeesOld ::
     ( Member (Error WAPI.WalletAPIError) effs
     , Member ChainIndexEffect effs
     , Member (LogMsg TxBalanceMsg) effs
     , Member (State WalletState) effs
     )
     => FeeConfig
-    -> Map.Map TxOutRef TxOutTx
+    -> Map.Map TxOutRef TxOut
     -> UnbalancedTx
     -> Eff effs UnbalancedTx
-validateTxAndAddFees feeCfg ownTxOuts utx = do
+validateTxAndAddFeesOld feeCfg ownTxOuts utx = do
     -- Balance and sign just for validation
-    tx <- handleBalanceTx ownTxOuts utx
+    tx <- handleBalanceTxOld ownTxOuts utx
     signedTx <- handleAddSignature tx
-    let utxoIndex        = Ledger.UtxoIndex $ unBalancedTxUtxoIndex utx <> fmap txOutTxOut ownTxOuts
+    let utxoIndex        = Ledger.UtxoIndex $ unBalancedTxUtxoIndex utx <> ownTxOuts
         ((e, _), events) = Ledger.runValidation (Ledger.validateTransactionOffChain signedTx) utxoIndex
     for_ e $ \(phase, ve) -> do
         logWarn $ ValidationFailed phase (txId tx) tx ve events
@@ -217,40 +268,133 @@ validateTxAndAddFees feeCfg ownTxOuts utx = do
         theFee = Ada.toValue $ calcFees feeCfg scriptsSize -- TODO: use protocol parameters
     pure $ utx{ unBalancedTxTx = (unBalancedTxTx utx){ txFee = theFee }}
 
-lookupValue ::
+validateTxAndAddFees ::
     ( Member (Error WAPI.WalletAPIError) effs
-    , Member ChainIndexEffect effs
+    , Member ChainIndexQueryEffect effs
+    , Member (LogMsg TxBalanceMsg) effs
+    , Member (State WalletState) effs
+    )
+    => FeeConfig
+    -> Map.Map TxOutRef ChainIndexTxOut
+    -> UnbalancedTx
+    -> Eff effs UnbalancedTx
+validateTxAndAddFees feeCfg ownTxOuts utx = do
+    -- Balance and sign just for validation
+    tx <- handleBalanceTx ownTxOuts utx
+    signedTx <- handleAddSignature tx
+    let utxoIndex        = Ledger.UtxoIndex $ unBalancedTxUtxoIndex utx <> (toTxOut <$> ownTxOuts)
+        ((e, _), events) = Ledger.runValidation (Ledger.validateTransactionOffChain signedTx) utxoIndex
+    for_ e $ \(phase, ve) -> do
+        logWarn $ ValidationFailed phase (txId tx) tx ve events
+        throwError $ WAPI.ValidationError ve
+    let scriptsSize = getSum $ foldMap (Sum . scriptSize . Ledger.sveScript) events
+        theFee = Ada.toValue $ calcFees feeCfg scriptsSize -- TODO: use protocol parameters
+    pure $ utx{ unBalancedTxTx = (unBalancedTxTx utx){ txFee = theFee }}
+
+-- TODO: To delete. Uses the old chain index.
+lookupValueOld ::
+    ( Member (Error WAPI.WalletAPIError) effs
+    , Member ChainIndexEffect effs -- TODO Delete
     , Member (State WalletState) effs
     )
     => Map.Map TxOutRef TxOut
     -> Tx.TxIn
     -> Eff effs Value
-lookupValue otherInputsMap outputRef = do
+lookupValueOld otherInputsMap outputRef = do
     walletIndexMap <- fmap Tx.txOutTxOut . AM.outRefMap . view (chainIndex . idxWatchedAddresses) <$> get
+
     chainIndexMap <- fmap Tx.txOutTxOut . AM.outRefMap <$> WAPI.watchedAddresses
+
     let txout = (otherInputsMap <> walletIndexMap <> chainIndexMap) ^. at (Tx.txInRef outputRef)
     case txout of
         Just output -> pure $ Tx.txOutValue output
         Nothing ->
             WAPI.throwOtherError $ "Unable to find TxOut for " <> fromString (show outputRef)
 
+lookupValue ::
+    ( Member (Error WAPI.WalletAPIError) effs
+    , Member ChainIndexQueryEffect effs
+    )
+    => Tx.TxIn
+    -> Eff effs Value
+lookupValue outputRef@TxIn {txInRef} = do
+    txoutMaybe <- ChainIndex.txOutFromRef txInRef
+    case txoutMaybe of
+        Just txout -> pure $ Tx.getTxOutValue txout
+        Nothing ->
+            WAPI.throwOtherError $ "Unable to find TxOut for " <> fromString (show outputRef)
+
+-- | Balance an unbalanced transaction by adding missing inputs and outputs.
+--
+-- TODO: To delete. Uses the old chain index.
+handleBalanceTxOld ::
+    forall effs.
+    ( Member (State WalletState) effs
+    , Member ChainIndexEffect effs -- TODO delete
+    , Member (Error WAPI.WalletAPIError) effs
+    , Member (LogMsg TxBalanceMsg) effs
+    )
+    => Map.Map TxOutRef TxOut
+    -> UnbalancedTx
+    -> Eff effs Tx
+handleBalanceTxOld utxo UnbalancedTx{unBalancedTxTx, unBalancedTxUtxoIndex} = do
+    let filteredUnbalancedTxTx = removeEmptyOutputs unBalancedTxTx
+    let txInputs = Set.toList $ Tx.txInputs filteredUnbalancedTxTx
+    ownPubKey <- gets (toPublicKey . view ownPrivateKey)
+    inputValues <- traverse (lookupValueOld unBalancedTxUtxoIndex) (Set.toList $ Tx.txInputs filteredUnbalancedTxTx)
+    collateral  <- traverse (lookupValueOld unBalancedTxUtxoIndex) (Set.toList $ Tx.txCollateral filteredUnbalancedTxTx)
+    let fees = txFee filteredUnbalancedTxTx
+        left = txMint filteredUnbalancedTxTx <> fold inputValues
+        right = fees <> foldMap (view Tx.outValue) (filteredUnbalancedTxTx ^. Tx.outputs)
+        remainingFees = fees PlutusTx.- fold collateral -- TODO: add collateralPercent
+        balance = left PlutusTx.- right
+        (neg, pos) = Value.split balance
+
+    tx' <- if Value.isZero pos
+           then do
+               logDebug NoOutputsAdded
+               pure filteredUnbalancedTxTx
+           else do
+                logDebug $ AddingPublicKeyOutputFor pos
+                pure $ addOutputs ownPubKey pos filteredUnbalancedTxTx
+
+    tx'' <- if Value.isZero neg
+            then do
+                logDebug NoInputsAdded
+                pure tx'
+            else do
+                logDebug $ AddingInputsFor neg
+                -- filter out inputs from utxo that are already in unBalancedTx
+                let inputsOutRefs = map Tx.txInRef txInputs
+                    filteredUtxo = flip Map.filterWithKey utxo $ \txOutRef _ ->
+                        txOutRef `notElem` inputsOutRefs
+                addInputsOld filteredUtxo ownPubKey neg tx'
+
+    if remainingFees `Value.leq` PlutusTx.zero
+    then do
+        logDebug NoCollateralInputsAdded
+        pure tx''
+    else do
+        logDebug $ AddingCollateralInputsFor remainingFees
+        addCollateralOld utxo remainingFees tx''
+
 -- | balance an unbalanced transaction by adding missing inputs and outputs
 handleBalanceTx ::
     forall effs.
     ( Member (State WalletState) effs
-    , Member ChainIndexEffect effs
+    , Member ChainIndexQueryEffect effs
     , Member (Error WAPI.WalletAPIError) effs
     , Member (LogMsg TxBalanceMsg) effs
     )
-    => Map.Map TxOutRef TxOutTx
+    => Map.Map TxOutRef ChainIndexTxOut
     -> UnbalancedTx
     -> Eff effs Tx
-handleBalanceTx utxo UnbalancedTx{unBalancedTxTx, unBalancedTxUtxoIndex} = do
+handleBalanceTx utxo UnbalancedTx{unBalancedTxTx} = do
     let filteredUnbalancedTxTx = removeEmptyOutputs unBalancedTxTx
     let txInputs = Set.toList $ Tx.txInputs filteredUnbalancedTxTx
     ownPubKey <- gets (toPublicKey . view ownPrivateKey)
-    inputValues <- traverse (lookupValue unBalancedTxUtxoIndex) (Set.toList $ Tx.txInputs filteredUnbalancedTxTx)
-    collateral  <- traverse (lookupValue unBalancedTxUtxoIndex) (Set.toList $ Tx.txCollateral filteredUnbalancedTxTx)
+    inputValues <- traverse lookupValue (Set.toList $ Tx.txInputs filteredUnbalancedTxTx)
+    collateral  <- traverse lookupValue (Set.toList $ Tx.txCollateral filteredUnbalancedTxTx)
     let fees = txFee filteredUnbalancedTxTx
         left = txMint filteredUnbalancedTxTx <> fold inputValues
         right = fees <> foldMap (view Tx.outValue) (filteredUnbalancedTxTx ^. Tx.outputs)
@@ -290,14 +434,30 @@ addOutputs :: PubKey -> Value -> Tx -> Tx
 addOutputs pk vl tx = tx & over Tx.outputs (pko :) where
     pko = Tx.pubKeyTxOut vl pk
 
+-- | TODO: To delete. Uses the old chain index.
+addCollateralOld
+    :: ( Member (Error WAPI.WalletAPIError) effs
+       )
+    => Map.Map TxOutRef TxOut
+    -> Value
+    -> Tx
+    -> Eff effs Tx
+addCollateralOld mp vl tx = do
+    (spend, _) <- selectCoin (second Tx.txOutValue <$> Map.toList mp) vl
+    let addTxCollateral =
+            let ins = Set.fromList (Tx.pubKeyTxIn . fst <$> spend)
+            in over Tx.collateralInputs (Set.union ins)
+    pure $ tx & addTxCollateral
+
 addCollateral
-    :: Member (Error WAPI.WalletAPIError) effs
-    => AM.UtxoMap
+    :: ( Member (Error WAPI.WalletAPIError) effs
+       )
+    => Map.Map TxOutRef ChainIndexTxOut
     -> Value
     -> Tx
     -> Eff effs Tx
 addCollateral mp vl tx = do
-    (spend, _) <- selectCoin (second (Tx.txOutValue . Tx.txOutTxOut) <$> Map.toList mp) vl
+    (spend, _) <- selectCoin (second Tx.getTxOutValue <$> Map.toList mp) vl
     let addTxCollateral =
             let ins = Set.fromList (Tx.pubKeyTxIn . fst <$> spend)
             in over Tx.collateralInputs (Set.union ins)
@@ -306,15 +466,43 @@ addCollateral mp vl tx = do
 -- | @addInputs mp pk vl tx@ selects transaction outputs worth at least
 --   @vl@ from the UTXO map @mp@ and adds them as inputs to @tx@. A public
 --   key output for @pk@ is added containing any leftover change.
+--
+-- | TODO: To delete. Uses the old chain index.
+addInputsOld
+    :: ( Member (Error WAPI.WalletAPIError) effs
+       )
+    => Map.Map TxOutRef TxOut
+    -> PubKey
+    -> Value
+    -> Tx
+    -> Eff effs Tx
+addInputsOld mp pk vl tx = do
+    (spend, change) <- selectCoin (second Tx.txOutValue <$> Map.toList mp) vl
+    let
+
+        addTxIns  =
+            let ins = Set.fromList (Tx.pubKeyTxIn . fst <$> spend)
+            in over Tx.inputs (Set.union ins)
+
+        addTxOuts = if Value.isZero change
+                    then id
+                    else addOutputs pk change
+
+    pure $ tx & addTxOuts & addTxIns
+
+-- | @addInputs mp pk vl tx@ selects transaction outputs worth at least
+--   @vl@ from the UTXO map @mp@ and adds them as inputs to @tx@. A public
+--   key output for @pk@ is added containing any leftover change.
 addInputs
-    :: Member (Error WAPI.WalletAPIError) effs
-    => AM.UtxoMap
+    :: ( Member (Error WAPI.WalletAPIError) effs
+       )
+    => Map.Map TxOutRef ChainIndexTxOut
     -> PubKey
     -> Value
     -> Tx
     -> Eff effs Tx
 addInputs mp pk vl tx = do
-    (spend, change) <- selectCoin (second (Tx.txOutValue . Tx.txOutTxOut) <$> Map.toList mp) vl
+    (spend, change) <- selectCoin (second Tx.getTxOutValue <$> Map.toList mp) vl
     let
 
         addTxIns  =
@@ -334,7 +522,9 @@ mkChangeOutput pubK v =
 
 -- | Given a set of @a@s with coin values, and a target value, select a number
 -- of @a@ such that their total value is greater than or equal to the target.
-selectCoin :: (Member (Error WAPI.WalletAPIError) effs)
+selectCoin ::
+    ( Member (Error WAPI.WalletAPIError) effs
+    )
     => [(a, Value)]
     -> Value
     -> Eff effs ([(a, Value)], Value)
@@ -352,7 +542,8 @@ selectCoin fnds vl =
         -- It is *not* correct to replace this condition with 'total `Value.lt` vl' -
         -- consider what happens if the amounts are incomparable.
         in  if not (total `Value.geq` vl)
-            then err
+            then do
+              err -- TODO: Even if the error is thrown, nothing is shown in the emulator log. Fix.
             else
                 let
                     fundsToSpend   = takeUntil (\(_, runningTotal) -> vl `Value.leq` runningTotal) fundsWithTotal

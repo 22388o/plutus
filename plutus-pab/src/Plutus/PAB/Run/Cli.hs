@@ -119,6 +119,17 @@ runConfigCommand _ ConfigCommandArgs{ccaTrace, ccaPABConfig=Config{dbConfig}} Mi
     App.migrate (toPABMsg ccaTrace) dbConfig
 
 -- Run mock wallet service
+runConfigCommand _ ConfigCommandArgs{ccaTrace, ccaPABConfig = Config {nodeServerConfig, chainIndexConfig, walletServerConfig},ccaAvailability} MockWalletOld =
+    liftIO $ WalletServer.mainOld
+        (toWalletLog ccaTrace)
+        walletServerConfig
+        (mscFeeConfig nodeServerConfig)
+        (mscSocketPath nodeServerConfig)
+        (mscSlotConfig nodeServerConfig)
+        (ChainIndex.ciBaseUrl chainIndexConfig)
+        ccaAvailability
+
+-- Run mock wallet service
 runConfigCommand _ ConfigCommandArgs{ccaTrace, ccaPABConfig = Config {nodeServerConfig, chainIndexConfig, walletServerConfig},ccaAvailability} MockWallet =
     liftIO $ WalletServer.main
         (toWalletLog ccaTrace)
@@ -210,6 +221,15 @@ runConfigCommand contractHandler c@ConfigCommandArgs{ccaAvailability} (ForkComma
       putStrLn $ "Started: " <> show subcommand
       starting ccaAvailability
       pure asyncId
+
+-- Run the chain-index service
+runConfigCommand _ ConfigCommandArgs{ccaTrace, ccaPABConfig=Config {nodeServerConfig, chainIndexConfig}, ccaAvailability} ChainIndexOld =
+    ChainIndex.mainOld
+        (toChainIndexLog ccaTrace)
+        chainIndexConfig
+        (mscSocketPath nodeServerConfig)
+        (mscSlotConfig nodeServerConfig)
+        ccaAvailability
 
 -- Run the chain-index service
 runConfigCommand _ ConfigCommandArgs{ccaTrace, ccaPABConfig=Config {nodeServerConfig, chainIndexConfig}, ccaAvailability} ChainIndex =

@@ -51,6 +51,7 @@ module Wallet.Emulator.Types(
     index,
     chainState,
     currentSlot,
+    processEmulatedOld,
     processEmulated,
     fundsDistribution,
     emLog,
@@ -65,11 +66,12 @@ import           Control.Monad.Freer.Extras.Log (LogMsg, mapLog)
 import           Control.Monad.Freer.State      (State)
 
 import           Ledger
+import           Plutus.ChainIndex              (ChainIndexError)
 import           Wallet.API                     (WalletAPIError (..))
 
 import           Ledger.Fee                     (FeeConfig)
 import           Ledger.TimeSlot                (SlotConfig)
-import           Wallet.Emulator.Chain          as Chain
+import           Wallet.Emulator.Chain
 import           Wallet.Emulator.MultiAgent
 import           Wallet.Emulator.NodeClient
 import           Wallet.Emulator.Wallet
@@ -77,8 +79,32 @@ import           Wallet.Types                   (AsAssertionError (..), Assertio
 
 type EmulatorEffs = '[MultiAgentEffect, ChainEffect, ChainControlEffect]
 
+-- TODO: To delete. Uses the old chain index.
+processEmulatedOld :: forall effs.
+    ( Member (Error WalletAPIError) effs
+    , Member (Error ChainIndexError) effs
+    , Member (Error AssertionError) effs
+    , Member (State EmulatorState) effs
+    , Member (LogMsg EmulatorEvent') effs
+    )
+    => SlotConfig
+    -> FeeConfig
+    -> Eff (MultiAgentEffect ': MultiAgentControlEffect ': ChainEffect ': ChainControlEffect ': effs)
+    ~> Eff effs
+processEmulatedOld slotCfg feeCfg act =
+    act
+        & handleMultiAgentOld feeCfg
+        & handleMultiAgentControl
+        & reinterpret2 @ChainEffect @(State ChainState) @(LogMsg ChainEvent) (handleChain slotCfg)
+        & interpret (Eff.handleZoomedState chainState)
+        & interpret (mapLog (review chainEvent))
+        & reinterpret2 @ChainControlEffect @(State ChainState) @(LogMsg ChainEvent) handleControlChain
+        & interpret (Eff.handleZoomedState chainState)
+        & interpret (mapLog (review chainEvent))
+
 processEmulated :: forall effs.
     ( Member (Error WalletAPIError) effs
+    , Member (Error ChainIndexError) effs
     , Member (Error AssertionError) effs
     , Member (State EmulatorState) effs
     , Member (LogMsg EmulatorEvent') effs

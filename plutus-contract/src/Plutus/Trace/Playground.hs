@@ -17,8 +17,10 @@ module Plutus.Trace.Playground(
     -- * Running traces
     , EmulatorConfig(..)
     , initialChainState
+    , runPlaygroundStreamOld
     , runPlaygroundStream
     -- * Interpreter
+    , interpretPlaygroundTraceOld
     , interpretPlaygroundTrace
     , walletInstanceTag
     ) where
@@ -47,7 +49,7 @@ import qualified Plutus.Trace.Effects.RunContractPlayground as RunContractPlaygr
 import           Plutus.Trace.Effects.Waiting               (Waiting, handleWaiting)
 import qualified Plutus.Trace.Effects.Waiting               as Waiting
 import           Plutus.Trace.Emulator.ContractInstance     (EmulatorRuntimeError)
-import           Plutus.Trace.Emulator.System               (launchSystemThreads)
+import           Plutus.Trace.Emulator.System               (launchSystemThreads, launchSystemThreadsOld)
 import           Plutus.Trace.Emulator.Types                (ContractConstraints, EmulatorMessage (..),
                                                              EmulatorRuntimeError (EmulatedWalletError),
                                                              EmulatorThreads, walletInstanceTag)
@@ -58,7 +60,7 @@ import           Wallet.Emulator.Chain                      (ChainControlEffect)
 import           Wallet.Emulator.MultiAgent                 (EmulatorEvent, EmulatorEvent' (..), EmulatorState,
                                                              MultiAgentControlEffect, MultiAgentEffect, schedulerEvent)
 import           Wallet.Emulator.Stream                     (EmulatorConfig (..), EmulatorErr (..), initialChainState,
-                                                             runTraceStream)
+                                                             runTraceStream, runTraceStreamOld)
 import           Wallet.Emulator.Wallet                     (Wallet (..))
 import           Wallet.Types                               (ContractInstanceId)
 
@@ -118,6 +120,24 @@ handlePlaygroundTrace contract action = do
     void $ exit @effs @EmulatorMessage
 
 -- | Run a 'Trace Playground', streaming the log messages as they arrive
+--
+-- TODO: To delete. Uses the old chain index.
+runPlaygroundStreamOld :: forall w s e effs a.
+    ( ContractConstraints s
+    , Show e
+    , JSON.ToJSON e
+    , JSON.ToJSON w
+    , Monoid w
+    )
+    => EmulatorConfig
+    -> Contract w s e ()
+    -> PlaygroundTrace a
+    -> Stream (Of (LogMessage EmulatorEvent)) (Eff effs) (Maybe EmulatorErr, EmulatorState)
+runPlaygroundStreamOld conf contract =
+    let wallets = fromMaybe (Wallet <$> [1..10]) (preview (initialChainState . _Left . to Map.keys) conf)
+    in runTraceStreamOld conf . interpretPlaygroundTraceOld contract wallets
+
+-- | Run a 'Trace Playground', streaming the log messages as they arrive
 runPlaygroundStream :: forall w s e effs a.
     ( ContractConstraints s
     , Show e
@@ -132,6 +152,37 @@ runPlaygroundStream :: forall w s e effs a.
 runPlaygroundStream conf contract =
     let wallets = fromMaybe (Wallet <$> [1..10]) (preview (initialChainState . _Left . to Map.keys) conf)
     in runTraceStream conf . interpretPlaygroundTrace contract wallets
+
+interpretPlaygroundTraceOld :: forall w s e effs a.
+    ( Member MultiAgentEffect effs
+    , Member MultiAgentControlEffect effs
+    , Member (Error EmulatorRuntimeError) effs
+    , Member ChainControlEffect effs
+    , Member (LogMsg EmulatorEvent') effs
+    , ContractConstraints s
+    , Show e
+    , JSON.ToJSON e
+    , JSON.ToJSON w
+    , Monoid w
+    )
+    => Contract w s e () -- ^ The contract
+    -> [Wallet] -- ^ Wallets that should be simulated in the emulator
+    -> PlaygroundTrace a
+    -> Eff effs ()
+interpretPlaygroundTraceOld contract wallets action =
+    evalState @EmulatorThreads mempty
+        $ evalState @(Map Wallet ContractInstanceId) Map.empty
+        $ handleDeterministicIds
+        $ interpret (mapLog (review schedulerEvent))
+        $ runThreads
+        $ do
+            raise $ launchSystemThreadsOld wallets
+            void
+                $ handlePlaygroundTrace contract
+                $ do
+                    void Waiting.nextSlot
+                    traverse_ RunContractPlayground.launchContract wallets
+                    action
 
 interpretPlaygroundTrace :: forall w s e effs a.
     ( Member MultiAgentEffect effs

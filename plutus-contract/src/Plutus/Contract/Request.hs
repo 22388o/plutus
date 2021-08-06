@@ -10,6 +10,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
@@ -24,19 +25,39 @@ module Plutus.Contract.Request(
     , isTime
     , currentTime
     , waitNMilliSeconds
+    -- ** Chain index queries
+    , datumFromHash
+    , validatorFromHash
+    , mintingPolicyFromHash
+    , stakeValidatorFromHash
+    , txOutFromRef
+    , txFromTxId
+    , utxoRefMembership
+    , utxosAt
+    , utxosWithTxAt
+    , getTip
     -- ** Querying the UTXO set
-    , utxoAt
+    , utxoAtOld
     -- ** Waiting for changes to the UTXO set
-    , addressChangeRequest
-    , nextTransactionsAt
+    , addressChangeRequestOld
+    , nextTransactionsAtOld
+    , fundsAtAddressGtOld
     , fundsAtAddressGt
+    , fundsAtAddressGeqOld
     , fundsAtAddressGeq
+    , fundsAtAddressConditionOld
     , fundsAtAddressCondition
+    , watchAddressUntilSlotOld
     , watchAddressUntilSlot
+    , watchAddressUntilTimeOld
     , watchAddressUntilTime
+    , awaitUtxoSpentOld
     , awaitUtxoSpent
+    , utxoIsSpentOld
     , utxoIsSpent
+    , awaitUtxoProducedOld
     , awaitUtxoProduced
+    , utxoIsProducedOld
     , utxoIsProduced
     -- ** Tx confirmation
     , TxStatus(..)
@@ -61,9 +82,13 @@ module Plutus.Contract.Request(
     , submitUnbalancedTx
     , submitBalancedTx
     , balanceTx
+    , submitTxOld
     , submitTx
+    , submitTxConstraintsOld
     , submitTxConstraints
+    , submitTxConstraintsSpendingOld
     , submitTxConstraintsSpending
+    , submitTxConstraintsWithOld
     , submitTxConstraintsWith
     , submitTxConfirmed
     -- * Etc.
@@ -71,13 +96,15 @@ module Plutus.Contract.Request(
     , pabReq
     ) where
 
-import           Control.Applicative
 import           Control.Lens                (Prism', preview, review, view)
 import qualified Control.Monad.Freer.Error   as E
 import           Data.Aeson                  (FromJSON, ToJSON)
 import qualified Data.Aeson                  as JSON
 import qualified Data.Aeson.Types            as JSON
 import           Data.List.NonEmpty          (NonEmpty)
+import           Data.Map                    (Map)
+import qualified Data.Map                    as Map
+import           Data.Maybe                  (mapMaybe)
 import           Data.Proxy                  (Proxy (..))
 import           Data.Row
 import qualified Data.Text                   as Text
@@ -85,15 +112,20 @@ import           Data.Text.Extras            (tshow)
 import           Data.Void                   (Void)
 import           GHC.Natural                 (Natural)
 import           GHC.TypeLits                (Symbol, symbolVal)
-import           Ledger                      (Address, DiffMilliSeconds, OnChainTx (..), POSIXTime, PubKey, Slot, Tx,
-                                              TxId, TxOut (..), TxOutRef, TxOutTx (..), Value, fromMilliSeconds, txId)
+import           Ledger                      (Address, Datum, DatumHash, DiffMilliSeconds, MintingPolicy,
+                                              MintingPolicyHash, OnChainTx (..), POSIXTime, PubKey, Slot,
+                                              StakeValidator, StakeValidatorHash, Tx, TxId, TxOut (..),
+                                              TxOutRef (txOutRefId), TxOutTx (..), Validator, ValidatorHash, Value,
+                                              addressCredential, fromMilliSeconds, txId)
 import           Ledger.AddressMap           (UtxoMap)
 import           Ledger.Constraints          (TxConstraints)
 import           Ledger.Constraints.OffChain (ScriptLookups, UnbalancedTx)
 import qualified Ledger.Constraints.OffChain as Constraints
+import           Ledger.Tx                   (ChainIndexTxOut, getTxOutValue)
 import           Ledger.Typed.Scripts        (TypedValidator, ValidatorTypes (..))
 import qualified Ledger.Value                as V
 import           Plutus.Contract.Util        (loopM)
+import           Plutus.V1.Ledger.Credential (Credential)
 import qualified PlutusTx
 
 import           Plutus.Contract.Effects     (ActiveEndpoint (..), PABReq (..), PABResp (..), TxStatus (..),
@@ -103,10 +135,9 @@ import           Plutus.Contract.Schema      (Input, Output)
 import           Wallet.Types                (AddressChangeRequest (..), AddressChangeResponse (..), ContractInstanceId,
                                               EndpointDescription (..), EndpointValue (..), targetSlot)
 
+import           Plutus.ChainIndex           (ChainIndexTx, Page (pageItems), Tip, fromOnChainTx)
 import           Plutus.Contract.Resumable
 import           Plutus.Contract.Types
-
-import           Prelude                     as Haskell
 
 -- | Constraints on the contract schema, ensuring that the labels of the schema
 --   are unique.
@@ -217,14 +248,174 @@ waitNMilliSeconds n = do
   t <- currentTime
   awaitTime $ t + fromMilliSeconds n
 
--- | Get the unspent transaction outputs at an address.
-utxoAt ::
+-- | TODO: To delete. Uses the old chain index.
+utxoAtOld ::
     forall w s e.
     ( AsContractError e
     )
     => Address
     -> Contract w s e UtxoMap
-utxoAt addr = fmap utxo $ pabReq (UtxoAtReq addr) E._UtxoAtResp
+utxoAtOld addr = fmap utxo $ pabReq (UtxoAtReq addr) E._UtxoAtResp
+
+-- | Get the unspent transaction outputs at an address.
+utxosAt ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => Address
+    -> Contract w s e (Map TxOutRef ChainIndexTxOut)
+utxosAt addr = do
+  utxoRefs <- fmap (pageItems . snd) $ utxoRefsAt $ addressCredential addr
+  txOuts <- traverse txOutFromRef utxoRefs
+  pure $ Map.fromList
+       $ mapMaybe (\(ref, txOut) -> fmap (ref,) txOut)
+       $ zip utxoRefs txOuts
+
+-- TODO: Multiple 'TxOutRef' can we associated with a single tx. Make sure to
+-- query the chain index only once for a specific tx.
+utxosWithTxAt ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => Address
+    -> Contract w s e (Map TxOutRef (ChainIndexTxOut, ChainIndexTx))
+utxosWithTxAt addr = do
+  utxoRefs <- fmap (pageItems . snd) $ utxoRefsAt $ addressCredential addr
+  txOuts <- traverse txOutTxFromRef utxoRefs
+  pure $ Map.fromList
+       $ mapMaybe (\(ref, txOut) -> fmap (ref,) txOut)
+       $ zip utxoRefs txOuts
+  where
+    txOutTxFromRef ref = do
+      outM <- txOutFromRef ref
+      txM <- txFromTxId $ txOutRefId ref
+      pure $ outM >>= \out -> txM >>= \tx -> pure (out, tx)
+
+datumFromHash ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => DatumHash
+    -> Contract w s e (Maybe Datum)
+datumFromHash h = do
+  cir <- pabReq (ChainIndexQueryReq $ E.DatumFromHash h) E._ChainIndexQueryResp
+  case cir of
+    E.DatumHashResponse r -> pure r
+    _ -> throwError $ review _OtherError
+                    $ Text.pack "Could not request DatumFromHash from the chain index"
+
+validatorFromHash ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => ValidatorHash
+    -> Contract w s e (Maybe Validator)
+validatorFromHash h = do
+  cir <- pabReq (ChainIndexQueryReq $ E.ValidatorFromHash h) E._ChainIndexQueryResp
+  case cir of
+    E.ValidatorHashResponse r -> pure r
+    _ -> throwError $ review _OtherError
+                    $ Text.pack "Could not request ValidatorFromHash from the chain index"
+
+mintingPolicyFromHash ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => MintingPolicyHash
+    -> Contract w s e (Maybe MintingPolicy)
+mintingPolicyFromHash h = do
+  cir <- pabReq (ChainIndexQueryReq $ E.MintingPolicyFromHash h) E._ChainIndexQueryResp
+  case cir of
+    E.MintingPolicyHashResponse r -> pure r
+    _ -> throwError $ review _OtherError
+                    $ Text.pack "Could not request MintingPolicyFromHash from the chain index"
+
+stakeValidatorFromHash ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => StakeValidatorHash
+    -> Contract w s e (Maybe StakeValidator)
+stakeValidatorFromHash h = do
+  cir <- pabReq (ChainIndexQueryReq $ E.StakeValidatorFromHash h) E._ChainIndexQueryResp
+  case cir of
+    E.StakeValidatorHashResponse r -> pure r
+    _ -> throwError $ review _OtherError
+                    $ Text.pack "Could not request StakeValidatorFromHash from the chain index"
+
+txOutFromRef ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => TxOutRef
+    -> Contract w s e (Maybe ChainIndexTxOut)
+txOutFromRef ref = do
+  cir <- pabReq (ChainIndexQueryReq $ E.TxOutFromRef ref) E._ChainIndexQueryResp
+  case cir of
+    E.TxOutRefResponse r -> pure r
+    _ -> throwError $ review _OtherError
+                    $ Text.pack "Could not request TxOutFromRef from the chain index"
+
+txFromTxId ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => TxId
+    -> Contract w s e (Maybe ChainIndexTx)
+txFromTxId txid = do
+  cir <- pabReq (ChainIndexQueryReq $ E.TxFromTxId txid) E._ChainIndexQueryResp
+  case cir of
+    E.TxIdResponse r -> pure r
+    _ -> throwError $ review _OtherError
+                    $ Text.pack "Could not request TxFromTxId from the chain index"
+
+utxoRefMembership ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => TxOutRef
+    -> Contract w s e (Tip, Bool)
+utxoRefMembership ref = do
+  cir <- pabReq (ChainIndexQueryReq $ E.UtxoSetMembership ref) E._ChainIndexQueryResp
+  case cir of
+    E.UtxoSetMembershipResponse r -> pure r
+    _ -> throwError $ review _OtherError
+                    $ Text.pack "Could not request UtxoSetMembership from the chain index"
+
+utxoRefsAt ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => Credential
+    -> Contract w s e (Tip, Page TxOutRef)
+utxoRefsAt cred = do
+  cir <- pabReq (ChainIndexQueryReq $ E.UtxoSetAtAddress cred) E._ChainIndexQueryResp
+  case cir of
+    E.UtxoSetAtResponse r -> pure r
+    _ -> throwError $ review _OtherError
+                    $ Text.pack "Could not request UtxoSetAtAddress from the chain index"
+
+getTip ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => Contract w s e Tip
+getTip = do
+  cir <- pabReq (ChainIndexQueryReq E.GetTip) E._ChainIndexQueryResp
+  case cir of
+    E.GetTipResponse r -> pure r
+    _ -> throwError $ review _OtherError
+                    $ Text.pack "Could not request GetTip from the chain index"
+
+-- | TODO: To delete. Uses the old chain index.
+watchAddressUntilSlotOld ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => Address
+    -> Slot
+    -> Contract w s e UtxoMap
+watchAddressUntilSlotOld a slot = awaitSlot slot >> utxoAtOld a
 
 -- | Wait until the target slot and get the unspent transaction outputs at an
 -- address.
@@ -234,8 +425,18 @@ watchAddressUntilSlot ::
     )
     => Address
     -> Slot
+    -> Contract w s e (Map TxOutRef ChainIndexTxOut)
+watchAddressUntilSlot a slot = awaitSlot slot >> utxosAt a
+
+-- | TODO: To delete. Uses the old chain index.
+watchAddressUntilTimeOld ::
+    forall w s e.
+    ( AsContractError e
+    )
+    => Address
+    -> POSIXTime
     -> Contract w s e UtxoMap
-watchAddressUntilSlot a slot = awaitSlot slot >> utxoAt a
+watchAddressUntilTimeOld a time = awaitTime time >> utxoAtOld a
 
 -- | Wait until the target time and get the unspent transaction outputs at an
 -- address.
@@ -245,8 +446,20 @@ watchAddressUntilTime ::
     )
     => Address
     -> POSIXTime
-    -> Contract w s e UtxoMap
-watchAddressUntilTime a time = awaitTime time >> utxoAt a
+    -> Contract w s e (Map TxOutRef ChainIndexTxOut)
+watchAddressUntilTime a time = awaitTime time >> utxosAt a
+
+{-| Wait until the UTXO has been spent, returning the transaction that spends it.
+-}
+--
+-- TODO Remove, uses old chain index
+awaitUtxoSpentOld ::
+  forall w s e.
+  ( AsContractError e
+  )
+  => TxOutRef
+  -> Contract w s e OnChainTx
+awaitUtxoSpentOld utxo = pabReq (AwaitUtxoSpentReq utxo) E._AwaitUtxoSpentResp
 
 {-| Wait until the UTXO has been spent, returning the transaction that spends it.
 -}
@@ -255,8 +468,20 @@ awaitUtxoSpent ::
   ( AsContractError e
   )
   => TxOutRef
-  -> Contract w s e OnChainTx
-awaitUtxoSpent utxo = pabReq (AwaitUtxoSpentReq utxo) E._AwaitUtxoSpentResp
+  -> Contract w s e ChainIndexTx
+awaitUtxoSpent utxo = fromOnChainTx <$> pabReq (AwaitUtxoSpentReq utxo) E._AwaitUtxoSpentResp
+
+{-| Wait until the UTXO has been spent, returning the transaction that spends it.
+-}
+--
+-- TODO Remove, uses old chain index
+utxoIsSpentOld ::
+  forall w s e.
+  ( AsContractError e
+  )
+  => TxOutRef
+  -> Promise w s e OnChainTx
+utxoIsSpentOld = Promise . awaitUtxoSpentOld
 
 {-| Wait until the UTXO has been spent, returning the transaction that spends it.
 -}
@@ -265,8 +490,20 @@ utxoIsSpent ::
   ( AsContractError e
   )
   => TxOutRef
-  -> Promise w s e OnChainTx
+  -> Promise w s e ChainIndexTx
 utxoIsSpent = Promise . awaitUtxoSpent
+
+{-| Wait until one or more unspent outputs are produced at an address.
+-}
+--
+-- TODO Remove, uses old chain index
+awaitUtxoProducedOld ::
+  forall w s e .
+  ( AsContractError e
+  )
+  => Address
+  -> Contract w s e (NonEmpty OnChainTx)
+awaitUtxoProducedOld address = pabReq (AwaitUtxoProducedReq address) E._AwaitUtxoProducedResp
 
 {-| Wait until one or more unspent outputs are produced at an address.
 -}
@@ -275,8 +512,21 @@ awaitUtxoProduced ::
   ( AsContractError e
   )
   => Address
-  -> Contract w s e (NonEmpty OnChainTx)
-awaitUtxoProduced address = pabReq (AwaitUtxoProducedReq address) E._AwaitUtxoProducedResp
+  -> Contract w s e (NonEmpty ChainIndexTx)
+awaitUtxoProduced address =
+  fmap fromOnChainTx <$> pabReq (AwaitUtxoProducedReq address) E._AwaitUtxoProducedResp
+
+{-| Wait until one or more unspent outputs are produced at an address.
+-}
+--
+-- TODO Remove, uses old chain index
+utxoIsProducedOld ::
+  forall w s e .
+  ( AsContractError e
+  )
+  => Address
+  -> Promise w s e (NonEmpty OnChainTx)
+utxoIsProducedOld = Promise . awaitUtxoProducedOld
 
 {-| Wait until one or more unspent outputs are produced at an address.
 -}
@@ -285,40 +535,51 @@ utxoIsProduced ::
   ( AsContractError e
   )
   => Address
-  -> Promise w s e (NonEmpty OnChainTx)
+  -> Promise w s e (NonEmpty ChainIndexTx)
 utxoIsProduced = Promise . awaitUtxoProduced
 
 {-| Get the transactions that modified an address in a specific slot.
 -}
-addressChangeRequest ::
+--
+-- | TODO: To delete. Uses the old chain index.
+addressChangeRequestOld ::
     forall w s e.
     ( AsContractError e
     )
     => AddressChangeRequest
     -> Promise w s e AddressChangeResponse
-addressChangeRequest r = isSlot (targetSlot r) `promiseBind` \_ -> do
-  resp <- pabReq (AddressChangeReq r) E._AddressChangeResp
-  pure resp
+addressChangeRequestOld r = isSlot (targetSlot r) `promiseBind` \_ -> do
+  pabReq (AddressChangeReq r) E._AddressChangeResp
 
--- | Call 'addresssChangeRequest' for the address in each slot, until at least one
---   transaction is returned that modifies the address.
-nextTransactionsAt ::
+-- | TODO: To delete. Uses the old chain index.
+nextTransactionsAtOld ::
     forall w s e.
     ( AsContractError e
     )
     => Address
     -> Contract w s e [OnChainTx]
-nextTransactionsAt addr = do
+nextTransactionsAtOld addr = do
     initial <- currentSlot
     let go :: Slot -> Contract w s ContractError (Either [OnChainTx] Slot)
         go sl = do
             let request = AddressChangeRequest{acreqSlotRangeFrom = sl, acreqSlotRangeTo = sl, acreqAddress=addr}
             _ <- awaitSlot (targetSlot request)
-            txns <- acrTxns <$> awaitPromise (addressChangeRequest request)
+            txns <- acrTxns <$> awaitPromise (addressChangeRequestOld request)
             if null txns
                 then pure $ Right (succ sl)
                 else pure $ Left txns
     mapError (review _ContractError) (checkpointLoop go initial)
+
+-- | TODO: To delete. Uses the old chain index.
+fundsAtAddressGtOld
+    :: forall w s e.
+       ( AsContractError e
+       )
+    => Address
+    -> Value
+    -> Contract w s e UtxoMap
+fundsAtAddressGtOld addr vl =
+    fundsAtAddressConditionOld (\presentVal -> presentVal `V.gt` vl) addr
 
 -- | Watch an address for changes, and return the outputs
 --   at that address when the total value at the address
@@ -329,9 +590,26 @@ fundsAtAddressGt
        )
     => Address
     -> Value
-    -> Contract w s e UtxoMap
+    -> Contract w s e (Map TxOutRef ChainIndexTxOut)
 fundsAtAddressGt addr vl =
     fundsAtAddressCondition (\presentVal -> presentVal `V.gt` vl) addr
+
+-- | TODO: To delete. Uses the old chain index.
+fundsAtAddressConditionOld
+    :: forall w s e.
+       ( AsContractError e
+       )
+    => (Value -> Bool)
+    -> Address
+    -> Contract w s e UtxoMap
+fundsAtAddressConditionOld condition addr = loopM go () where
+    go () = do
+        cur <- utxoAtOld addr
+        sl <- currentSlot
+        let presentVal = foldMap (txOutValue . txOutTxOut) cur
+        if condition presentVal
+            then pure (Right cur)
+            else awaitSlot (sl + 1) >> pure (Left ())
 
 fundsAtAddressCondition
     :: forall w s e.
@@ -339,15 +617,26 @@ fundsAtAddressCondition
        )
     => (Value -> Bool)
     -> Address
-    -> Contract w s e UtxoMap
+    -> Contract w s e (Map TxOutRef ChainIndexTxOut)
 fundsAtAddressCondition condition addr = loopM go () where
     go () = do
-        cur <- utxoAt addr
+        cur <- utxosAt addr
         sl <- currentSlot
-        let presentVal = foldMap (txOutValue . txOutTxOut) cur
+        let presentVal = foldMap getTxOutValue cur
         if condition presentVal
             then pure (Right cur)
             else awaitSlot (sl + 1) >> pure (Left ())
+
+-- | TODO: To delete. Uses the old chain index.
+fundsAtAddressGeqOld
+    :: forall w s e.
+       ( AsContractError e
+       )
+    => Address
+    -> Value
+    -> Contract w s e UtxoMap
+fundsAtAddressGeqOld addr vl =
+    fundsAtAddressConditionOld (\presentVal -> presentVal `V.geq` vl) addr
 
 -- | Watch an address for changes, and return the outputs
 --   at that address when the total value at the address
@@ -358,7 +647,7 @@ fundsAtAddressGeq
        )
     => Address
     -> Value
-    -> Contract w s e UtxoMap
+    -> Contract w s e (Map TxOutRef ChainIndexTxOut)
 fundsAtAddressGeq addr vl =
     fundsAtAddressCondition (\presentVal -> presentVal `V.geq` vl) addr
 
@@ -506,12 +795,41 @@ submitBalancedTx t =
 -- | Build a transaction that satisfies the constraints, then submit it to the
 --   network. The constraints do not refer to any typed script inputs or
 --   outputs.
+--
+-- | TODO: To delete. Uses the old chain index.
+submitTxOld :: forall w s e.
+  ( AsContractError e
+  )
+  => TxConstraints Void Void
+  -> Contract w s e Tx
+submitTxOld = submitTxConstraintsWithOld @Void mempty
+
+-- | Build a transaction that satisfies the constraints, then submit it to the
+--   network. The constraints do not refer to any typed script inputs or
+--   outputs.
 submitTx :: forall w s e.
   ( AsContractError e
   )
   => TxConstraints Void Void
   -> Contract w s e Tx
 submitTx = submitTxConstraintsWith @Void mempty
+
+-- | Build a transaction that satisfies the constraints, then submit it to the
+--   network. Using the current outputs at the contract address and the
+--   contract's own public key to solve the constraints.
+--
+-- | TODO: To delete. Uses the old chain index.
+submitTxConstraintsOld
+  :: forall a w s e.
+  ( PlutusTx.ToData (RedeemerType a)
+  , PlutusTx.FromData (DatumType a)
+  , PlutusTx.ToData (DatumType a)
+  , AsContractError e
+  )
+  => TypedValidator a
+  -> TxConstraints (RedeemerType a) (DatumType a)
+  -> Contract w s e Tx
+submitTxConstraintsOld inst = submitTxConstraintsWithOld (Constraints.typedValidatorLookups inst)
 
 -- | Build a transaction that satisfies the constraints, then submit it to the
 --   network. Using the current outputs at the contract address and the
@@ -530,7 +848,9 @@ submitTxConstraints inst = submitTxConstraintsWith (Constraints.typedValidatorLo
 
 -- | Build a transaction that satisfies the constraints using the UTXO map
 --   to resolve any input constraints (see 'Ledger.Constraints.TxConstraints.InputConstraint')
-submitTxConstraintsSpending
+--
+-- | TODO: To delete. Uses the old chain index.
+submitTxConstraintsSpendingOld
   :: forall a w s e.
   ( PlutusTx.ToData (RedeemerType a)
   , PlutusTx.FromData (DatumType a)
@@ -541,9 +861,44 @@ submitTxConstraintsSpending
   -> UtxoMap
   -> TxConstraints (RedeemerType a) (DatumType a)
   -> Contract w s e Tx
+submitTxConstraintsSpendingOld inst utxo =
+  let lookups = Constraints.typedValidatorLookups inst <> Constraints.unspentOutputsOld utxo
+  in submitTxConstraintsWithOld lookups
+
+-- | Build a transaction that satisfies the constraints using the UTXO map
+--   to resolve any input constraints (see 'Ledger.Constraints.TxConstraints.InputConstraint')
+submitTxConstraintsSpending
+  :: forall a w s e.
+  ( PlutusTx.ToData (RedeemerType a)
+  , PlutusTx.FromData (DatumType a)
+  , PlutusTx.ToData (DatumType a)
+  , AsContractError e
+  )
+  => TypedValidator a
+  -> Map TxOutRef ChainIndexTxOut
+  -> TxConstraints (RedeemerType a) (DatumType a)
+  -> Contract w s e Tx
 submitTxConstraintsSpending inst utxo =
   let lookups = Constraints.typedValidatorLookups inst <> Constraints.unspentOutputs utxo
   in submitTxConstraintsWith lookups
+
+-- | Build a transaction that satisfies the constraints, then submit it to the
+--   network. Using the given constraints.
+--
+-- | TODO: To delete. Uses the old chain index.
+submitTxConstraintsWithOld
+  :: forall a w s e.
+  ( PlutusTx.ToData (RedeemerType a)
+  , PlutusTx.FromData (DatumType a)
+  , PlutusTx.ToData (DatumType a)
+  , AsContractError e
+  )
+  => ScriptLookups a
+  -> TxConstraints (RedeemerType a) (DatumType a)
+  -> Contract w s e Tx
+submitTxConstraintsWithOld sl constraints = do
+  tx <- either (throwError . review _ConstraintResolutionError) pure (Constraints.mkTxOld sl constraints)
+  submitUnbalancedTx tx
 
 -- | Build a transaction that satisfies the constraints, then submit it to the
 --   network. Using the given constraints.

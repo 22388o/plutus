@@ -61,6 +61,7 @@ import           Plutus.PAB.Core.ContractInstance.RequestHandlers (ContractInsta
 import           Wallet.Effects                                   (ChainIndexEffect, NodeClientEffect, WalletEffect)
 import           Wallet.Emulator.LogMessages                      (TxBalanceMsg)
 
+import           Plutus.ChainIndex                                (ChainIndexQueryEffect)
 import           Plutus.Contract                                  (AddressChangeRequest (..))
 import           Plutus.PAB.Core.ContractInstance.STM             (Activity (Done, Stopped), BlockchainEnv (..),
                                                                    InstanceState (..), InstancesState,
@@ -159,7 +160,7 @@ initContractInstanceState ::
 initContractInstanceState ContractActivationArgs{caID} = do
   activeContractInstanceId <- ContractInstanceId <$> uuidNextRandom
   initialState <- Contract.initialState @t activeContractInstanceId caID
-  pure $ (activeContractInstanceId, ContractInstanceState initialState emptyInstanceState)
+  pure (activeContractInstanceId, ContractInstanceState initialState emptyInstanceState)
 
 processAwaitSlotRequestsSTM ::
     forall effs.
@@ -229,6 +230,7 @@ processAwaitTimeRequestsSTM =
 stmRequestHandler ::
     forall effs.
     ( Member ChainIndexEffect effs
+    , Member ChainIndexQueryEffect effs
     , Member WalletEffect effs
     , Member NodeClientEffect effs
     , Member (LogMsg RequestHandlerLogMsg) effs
@@ -240,14 +242,15 @@ stmRequestHandler ::
     => RequestHandler effs (Request PABReq) (STM (Response PABResp))
 stmRequestHandler = fmap sequence (wrapHandler (fmap pure nonBlockingRequests) <> blockingRequests) where
 
-    -- requests that can be handled by 'WalletEffect', 'ChainIndexEffect', etc.
+    -- requests that can be handled by 'WalletEffect', 'ChainIndexQueryEffect', etc.
     nonBlockingRequests =
         RequestHandler.handleOwnPubKeyQueries @effs
-        <> RequestHandler.handleUtxoQueries @effs
+        <> RequestHandler.handleChainIndexQueries @effs
+        <> RequestHandler.handleUtxoQueriesOld @effs
         <> RequestHandler.handleUnbalancedTransactions @effs
-        <> RequestHandler.handlePendingTransactions @effs
+        <> RequestHandler.handlePendingTransactionsOld @effs
         <> RequestHandler.handleOwnInstanceIdQueries @effs
-        <> RequestHandler.handleAddressChangedAtQueries @effs
+        <> RequestHandler.handleAddressChangedAtQueriesOld @effs
         <> RequestHandler.handleCurrentSlotQueries @effs
         <> RequestHandler.handleCurrentTimeQueries @effs
 
@@ -303,6 +306,7 @@ type AppBackendConstraints t m effs =
     , Member (Error PABError) effs
     , Member (LogMsg (ContractInstanceMsg t)) effs
     , Member ChainIndexEffect effs
+    , Member ChainIndexQueryEffect effs
     , Member WalletEffect effs
     , Member NodeClientEffect effs
     , Member (LogMsg RequestHandlerLogMsg) effs
@@ -376,6 +380,7 @@ updateState ContractResponse{newState = State{observableState}, hooks} = do
 respondToRequestsSTM ::
     forall t effs.
     ( Member ChainIndexEffect effs
+    , Member ChainIndexQueryEffect effs
     , Member WalletEffect effs
     , Member NodeClientEffect effs
     , Member (LogMsg RequestHandlerLogMsg) effs

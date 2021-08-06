@@ -258,6 +258,11 @@
                 (fun [[(lam k (type) (lam v (type) [List [[Tuple2 k] v]])) (con bytestring)] [[(lam k (type) (lam v (type) [List [[Tuple2 k] v]])) (con bytestring)] (con integer)]] TxConstraint)
               )
               (vardecl MustSpendPubKeyOutput (fun TxOutRef TxConstraint))
+              (vardecl MustSpendPubKeyOutput (fun TxOutRef TxConstraint))
+              (vardecl
+                MustSpendScriptOutput
+                (fun TxOutRef (fun (con data) TxConstraint))
+              )
               (vardecl
                 MustSpendScriptOutput
                 (fun TxOutRef (fun (con data) TxConstraint))
