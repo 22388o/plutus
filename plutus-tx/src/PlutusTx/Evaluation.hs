@@ -7,6 +7,7 @@ module PlutusTx.Evaluation
     ( evaluateCek
     , unsafeEvaluateCek
     , evaluateCekTrace
+    , evaluateCekTraceTime
     , ErrorWithCause(..)
     , EvaluationError(..)
     , CekExTally
@@ -45,4 +46,14 @@ evaluateCekTrace
     -> ([Text], TallyingSt fun, Either (CekEvaluationException uni fun) (Term Name uni fun ()))
 evaluateCekTrace (Program _ _ t) =
     case runCek PLC.defaultCekParameters Cek.tallying Cek.logEmitter t of
+        (errOrRes, st, logs) -> (logs, st, errOrRes)
+
+-- | Evaluate a program in the CEK machine with the usual text dynamic builtins and tracing, additionally
+-- returning the trace output.
+evaluateCekTraceTime
+    :: (uni ~ DefaultUni, fun ~ DefaultFun)
+    => Program Name uni fun ()
+    -> ([Text], TallyingSt fun, Either (CekEvaluationException uni fun) (Term Name uni fun ()))
+evaluateCekTraceTime (Program _ _ t) =
+    case runCek PLC.defaultCekParameters Cek.tallying Cek.logWithTimeEmitter t of
         (errOrRes, st, logs) -> (logs, st, errOrRes)
