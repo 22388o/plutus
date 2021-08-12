@@ -11,6 +11,7 @@
 -- | Functions for compiling GHC Core expressions into Plutus Core terms.
 module PlutusTx.Compiler.Expr (compileExpr, compileExprWithDefs, compileDataConRef) where
 
+import qualified PlutusTx.Builtins             as Builtins
 import           PlutusTx.Compiler.Binders
 import           PlutusTx.Compiler.Builtins
 import           PlutusTx.Compiler.Error
@@ -20,8 +21,7 @@ import           PlutusTx.Compiler.Type
 import           PlutusTx.Compiler.Types
 import           PlutusTx.Compiler.Utils
 import           PlutusTx.PIRTypes
-
-import qualified PlutusTx.Builtins             as Builtins
+import           PlutusTx.Prelude              (trace)
 -- I feel like we shouldn't need this, we only need it to spot the special String type, which is annoying
 import qualified PlutusTx.Builtins.Class       as Builtins
 
@@ -375,6 +375,19 @@ hoistExpr var t =
                     (PIR.Def var' (t', if strict then PIR.Strict else PIR.NonStrict))
                     (Set.map LexName deps)
                 pure $ PIR.mkVar () var'
+
+-- | Wrap a PLCTerm with timed logs for profiling
+wrapInTraces ::
+-- CompilingDefault uni fun =>
+    -- | The name of the function you are profiling
+    Builtins.BuiltinString ->
+    PIRTerm uni fun ->
+    PIRTerm uni fun
+wrapInTraces varName term =
+    case varName of
+        "apply" -> trace (Builtins.appendString "entering" varName) term
+        _       -> term
+    -- trace ("exiting")
 
 -- Expressions
 
