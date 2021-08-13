@@ -52,12 +52,13 @@ data CompilationOpts = CompilationOpts {
     , _coDoSimplifierBeta               :: Bool
     , _coDoSimplifierInline             :: Bool
     , _coDoSimplifierRemoveDeadBindings :: Bool
+    , _coProfile                        :: Bool
     } deriving (Eq, Show)
 
 makeLenses ''CompilationOpts
 
 defaultCompilationOpts :: CompilationOpts
-defaultCompilationOpts = CompilationOpts True False False False 8 True True True True
+defaultCompilationOpts = CompilationOpts True False False False 8 True True True True False
 
 data CompilationCtx uni fun a = CompilationCtx {
     _ccOpts              :: CompilationOpts

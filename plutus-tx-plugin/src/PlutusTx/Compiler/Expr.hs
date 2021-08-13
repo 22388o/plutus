@@ -360,6 +360,8 @@ hoistExpr var t =
                     mempty
 
                 t' <- compileExpr t
+                -- t'' <- delay (Builtins.trace `Apply` "exiting x" `Apply` t')
+                -- t''' <- force (Builtins.trace `Apply` "entering x" `Apply` t'')
 
                 -- See Note [Non-strict let-bindings]
                 let strict = PIR.isPure (const PIR.NonStrict) t'
@@ -375,19 +377,6 @@ hoistExpr var t =
                     (PIR.Def var' (t', if strict then PIR.Strict else PIR.NonStrict))
                     (Set.map LexName deps)
                 pure $ PIR.mkVar () var'
-
--- | Wrap a PLCTerm with timed logs for profiling
-wrapInTraces ::
--- CompilingDefault uni fun =>
-    -- | The name of the function you are profiling
-    Builtins.BuiltinString ->
-    PIRTerm uni fun ->
-    PIRTerm uni fun
-wrapInTraces varName term =
-    case varName of
-        "apply" -> trace (Builtins.appendString "entering" varName) term
-        _       -> term
-    -- trace ("exiting")
 
 -- Expressions
 

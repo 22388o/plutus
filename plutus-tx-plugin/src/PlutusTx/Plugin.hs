@@ -71,6 +71,7 @@ data PluginOptions = PluginOptions {
     , poDoSimplifierBeta               :: Bool
     , poDoSimplifierInline             :: Bool
     , poDoSimplifierRemoveDeadBindings :: Bool
+    , poProfile                        :: Bool
     }
 
 data PluginCtx = PluginCtx
@@ -148,6 +149,8 @@ parsePluginArgs args = do
             , poDoSimplifierBeta = notElem' "no-simplifier-beta"
             , poDoSimplifierInline = notElem' "no-simplifier-inline"
             , poDoSimplifierRemoveDeadBindings = notElem' "no-simplifier-remove-dead-bindings"
+            -- profiling
+            , poProfile = not $ elem' "none"
             }
     -- TODO: better parsing with failures
     pure opts
@@ -368,6 +371,8 @@ runCompiler moduleName opts expr = do
                  & set (PIR.ccOpts . PIR.coDoSimplifierBeta)               (poDoSimplifierBeta opts)
                  & set (PIR.ccOpts . PIR.coDoSimplifierInline)             (poDoSimplifierInline opts)
                  & set (PIR.ccOpts . PIR.coDoSimplifierRemoveDeadBindings) (poDoSimplifierRemoveDeadBindings opts)
+                 -- Profiling
+                 & set (PIR.ccOpts . PIR.coProfile) (poProfile opts)
 
 
     -- GHC.Core -> Pir translation.

@@ -23,6 +23,7 @@ module PlutusIR.Compiler (
     coDoSimplifierBeta,
     coDoSimplifierInline,
     coDoSimplifierRemoveDeadBindings,
+    coProfile,
     defaultCompilationOpts,
     CompilationCtx,
     ccOpts,
