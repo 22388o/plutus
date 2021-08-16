@@ -359,9 +359,12 @@ hoistExpr var t =
                     (PIR.Def var' (PIR.mkVar () var', PIR.Strict))
                     mempty
 
-                t' <- compileExpr t
-                -- t'' <- delay (Builtins.trace `Apply` "exiting x" `Apply` t')
-                -- t''' <- force (Builtins.trace `Apply` "entering x" `Apply` t'')
+                CompileContext {ccProfile=profileOpts} <- ask
+                t' <-
+                    if profileOpts==All then do
+                        t'' <- compileExpr t
+                        return $ Builtins.trace "entering x" (\() -> Builtins.trace "exiting x" t'') ()
+                    else compileExpr t
 
                 -- See Note [Non-strict let-bindings]
                 let strict = PIR.isPure (const PIR.NonStrict) t'

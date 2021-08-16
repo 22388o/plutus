@@ -9,6 +9,7 @@
 module PlutusTx.Compiler.Types where
 
 import           PlutusTx.Compiler.Error
+import           PlutusTx.PIRTypes
 import           PlutusTx.PLCTypes
 
 import           PlutusIR.Compiler.Definitions
@@ -31,8 +32,9 @@ import qualified Language.Haskell.TH.Syntax    as TH
 
 type BuiltinNameInfo = Map.Map TH.Name GHC.TyThing
 
--- | Compilation options. Empty currently.
-data CompileOptions = CompileOptions {}
+-- | Compilation options.
+data CompileOptions = CompileOptions {
+}
 
 data CompileContext uni fun = CompileContext {
     ccOpts            :: CompileOptions,
@@ -40,9 +42,15 @@ data CompileContext uni fun = CompileContext {
     ccFamInstEnvs     :: GHC.FamInstEnvs,
     ccBuiltinNameInfo :: BuiltinNameInfo,
     ccScopes          :: ScopeStack uni fun,
-    ccBlackholed      :: Set.Set GHC.Name
+    ccBlackholed      :: Set.Set GHC.Name,
+    ccProfile         :: ProfileOpts
     }
 
+data ProfileOpts =
+    All
+    | None
+    | Some (PIRTerm PLC.DefaultUni PLC.DefaultFun)
+    deriving (Eq)
 -- | A wrapper around 'GHC.Name' with a stable 'Ord' instance. Use this where the ordering
 -- will affect the output of the compiler, i.e. when sorting or so on. It's  fine to use
 -- 'GHC.Name' if we're just putting them in a 'Set.Set', for example.

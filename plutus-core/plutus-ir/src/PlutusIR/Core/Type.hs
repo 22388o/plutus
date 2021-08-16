@@ -120,7 +120,7 @@ data Term tyname name uni fun a =
                         | Error a (Type tyname uni a)
                         | IWrap a (Type tyname uni a) (Type tyname uni a) (Term tyname name uni fun a)
                         | Unwrap a (Term tyname name uni fun a)
-                        deriving (Functor, Show, Generic)
+                        deriving (Functor, Show, Generic, Eq)
 
 type instance UniOf (Term tyname name uni fun ann) = uni
 

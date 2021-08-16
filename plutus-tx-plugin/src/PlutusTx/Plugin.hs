@@ -48,7 +48,7 @@ import           Data.List                     (isPrefixOf)
 import qualified Data.Map                      as Map
 import           Data.Maybe                    (fromMaybe)
 import qualified Data.Text.Prettyprint.Doc     as PP
-import           Data.Traversable
+import           Data.Traversable              (for)
 import           ErrorCode
 import qualified FamInstEnv                    as GHC
 import           Text.Read                     (readMaybe)
@@ -149,8 +149,8 @@ parsePluginArgs args = do
             , poDoSimplifierBeta = notElem' "no-simplifier-beta"
             , poDoSimplifierInline = notElem' "no-simplifier-inline"
             , poDoSimplifierRemoveDeadBindings = notElem' "no-simplifier-remove-dead-bindings"
-            -- profiling
-            , poProfile = not $ elem' "none"
+            -- profiling: profiling-on turns on profiling for everything
+            , poProfile = elem' "profiling-on"
             }
     -- TODO: better parsing with failures
     pure opts
